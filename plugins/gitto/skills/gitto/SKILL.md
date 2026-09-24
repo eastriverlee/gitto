@@ -13,8 +13,8 @@ so each new checkout installs and builds again what the last one already has.
 nothing until either side writes, and then repoints what the move broke.
 
     cd <the canonical checkout>
-    gitto new attendance-fix
-    cd ../<canonical>-attendance-fix
+    gitto new auth-fix
+    cd ../<canonical>-auth-fix
 
 Measured on an 18 GB checkout with four submodules: 21 seconds, 60 MB of real
 disk, `node_modules` and a 2.4 GB prebuilt dependency already in place.

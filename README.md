@@ -4,11 +4,11 @@ Copy a whole working directory, dependencies and build output included.
 
 ```
 $ gitto new auth-fix
-cloning internkim -> internkim-auth-fix by clonefile
+cloning storefront -> storefront-auth-fix by clonefile
   repointed core.hooksPath at this clone's own hooks
   branch auth-fix on origin/main, 4 submodules
 
-$ cd ../internkim-auth-fix && ls
+$ cd ../storefront-auth-fix && ls
 node_modules/  .dependency/  web/  ...
 ```
 

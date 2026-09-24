@@ -120,7 +120,7 @@ function FileTrees() {
 					with <code>git worktree</code>
 				</p>
 				<Files className="my-0 flex-1">
-					<Folder name="attendance-fix" defaultOpen>
+					<Folder name="auth-fix" defaultOpen>
 						<File name="package.json" />
 						<File name="src" />
 					</Folder>
@@ -131,7 +131,7 @@ function FileTrees() {
 					with <code>gitto</code>
 				</p>
 				<Files className="my-0 flex-1">
-					<Folder name="attendance-fix" defaultOpen>
+					<Folder name="auth-fix" defaultOpen>
 						<File name="package.json" />
 						<File name="src" />
 						<File name="node_modules" />
