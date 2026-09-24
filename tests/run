@@ -424,7 +424,7 @@ adoptsAWorktreeInPlace() {
   host=$(dirname "$canonical")/nest-host
   git clone -q "$(git -C "$canonical" config remote.origin.url)" "$host"
   leaf=$(dirname "$canonical")/nest-leaf
-  git -C "$host" worktree add -q "$leaf" -b leaf
+  git -C "$host" worktree add -q "$leaf" -b fix/leaf-holds-a-slash
   printf 'local\n' >> "$leaf/file.txt"
   printf 'x\n' > "$leaf/untracked.txt"
   before=$(git -C "$leaf" status --porcelain)
@@ -434,7 +434,7 @@ adoptsAWorktreeInPlace() {
   expectPath 'the directory stays where it was' "$leaf"
   expectPath 'and gets a repository of its own' "$leaf/.git/HEAD"
   expectEqual 'every change survives exactly' "$before" "$(git -C "$leaf" status --porcelain)"
-  expectEqual 'the branch survives' 'leaf' "$(git -C "$leaf" rev-parse --abbrev-ref HEAD)"
+  expectEqual 'the branch survives' 'fix/leaf-holds-a-slash' "$(git -C "$leaf" rev-parse --abbrev-ref HEAD)"
   expectEqual 'the host stops registering it' '1' "$(git -C "$host" worktree list | wc -l | tr -d ' ')"
   expectEqual 'it records where it came from' "$canonical" "$(cat "$leaf/.gitto")"
   expectMissing 'and the record stays out of git status' "$(git -C "$leaf" status --porcelain)" '.gitto'

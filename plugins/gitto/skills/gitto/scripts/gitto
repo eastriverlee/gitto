@@ -548,13 +548,13 @@ recordSubmoduleHeads() {
 
 discardAdoptionScaffolding() {
   repositoryPath="$1"
-  git -C "$repositoryPath" for-each-ref --format='%(refname)' 'refs/gitto-adopted/*' 2>/dev/null |
+  git -C "$repositoryPath" for-each-ref --format='%(refname)' 'refs/gitto-adopted' 2>/dev/null |
     while read -r scaffoldRef; do
       [ -n "$scaffoldRef" ] || continue
       git -C "$repositoryPath" update-ref -d "$scaffoldRef" </dev/null
     done
   git -C "$repositoryPath" submodule foreach --recursive --quiet \
-    'git for-each-ref --format="%(refname)" "refs/gitto-adopted/*" | while read -r stale; do [ -n "$stale" ] && git update-ref -d "$stale"; done' \
+    'git for-each-ref --format="%(refname)" "refs/gitto-adopted" | while read -r stale; do [ -n "$stale" ] && git update-ref -d "$stale"; done' \
     >/dev/null 2>&1 || true
 }
 
