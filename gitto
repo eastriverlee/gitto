@@ -150,6 +150,7 @@ reportCanonicalReferences() {
         [ -f "$activationScript" ] || continue
         grep -qF "$canonicalPrefix" "$activationScript" && echo "  virtualenv   $activationScript"
       done
+      worktreesHostedOutside "$clonePath" | sed 's/^/  hosts        /'
       git -C "$clonePath" submodule--helper list 2>/dev/null | awk '{print $NF}' | while read -r submodulePath; do
         submoduleGitDirectory=$(git -C "$clonePath/$submodulePath" rev-parse --absolute-git-dir 2>/dev/null) || continue
         [ "${submoduleGitDirectory#"$clonePath"/}" = "$submoduleGitDirectory" ] \
@@ -270,6 +271,19 @@ listClones() {
   eachClone "$canonicalPath" | while read -r clonePath; do describeClone "$clonePath"; done
 }
 
+worktreesHostedOutside() {
+  hostPath="$1"
+  {
+    git -C "$hostPath" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2}'
+    git -C "$hostPath" submodule foreach --recursive --quiet \
+      'git worktree list --porcelain' 2>/dev/null | awk '/^worktree /{print $2}'
+  } | while read -r hostedPath; do
+      if [ "${hostedPath#"$hostPath"}" = "$hostedPath" ]; then
+        echo "$hostedPath"
+      fi
+    done
+}
+
 removeClone() {
   [ $# -ge 1 ] || printUsage
   canonicalPath=$(resolveCanonical)
@@ -280,6 +294,10 @@ removeClone() {
   [ "$dirtyCount" -eq 0 ] || fail "$1 holds $dirtyCount uncommitted changes"
   unpushedCount=$(git -C "$clonePath" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' ')
   [ "$unpushedCount" -eq 0 ] || fail "$1 holds $unpushedCount commits no remote has"
+  hostedElsewhere=$(worktreesHostedOutside "$clonePath")
+  [ -z "$hostedElsewhere" ] || fail "$1 hosts the history of worktrees that live outside it:
+$(echo "$hostedElsewhere" | sed 's/^/        /')
+      removing it would leave each of them without a repository."
 
   rm -rf "$clonePath"
   echo "removed $(basename "$clonePath")"
