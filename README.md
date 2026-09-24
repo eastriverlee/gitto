@@ -36,7 +36,7 @@ hooks and reading its configuration.
 curl -fsSL https://gitto.13e7.co/install | sh
 ```
 
-### As a plugin
+## Plugin
 
 The plugin carries a skill that teaches an agent when to reach for `gitto`, how
 to read what `doctor` reports, and how to repair a checkout whose git directory
@@ -58,7 +58,7 @@ codex plugin add gitto@13e7
 
 Either one then installs the command with `/gitto:install`.
 
-### From source
+## From source
 
 ```sh
 git clone https://github.com/eastriverlee/gitto

@@ -7,6 +7,7 @@ import { baseOptions } from '@/lib/layout.shared';
 import { docsOrigin, docsRoute, siteOrigin } from '@/lib/shared';
 import { highlightSample } from '@/lib/highlight';
 import { agentTabs, installTabs, samples } from '@/lib/landing-samples';
+import { CircleX, FolderOpen, GitBranch, Loader2 } from 'lucide-react';
 import { CodeSample, CodeSampleTabs } from '@/components/code-sample';
 import { Wordmark } from '@/components/logo';
 
@@ -85,28 +86,61 @@ function Prose({ children, className = '' }: { children: ReactNode; className?: 
 	return <p className={`max-w-prose ${className}`}>{children}</p>;
 }
 
+function Step({ icon, children, className }: { icon: ReactNode; children: ReactNode; className?: string }) {
+	return (
+		<div className="text-fd-muted-foreground flex min-h-4 items-center gap-2 text-sm">
+			<span aria-hidden="true" className="size-4 shrink-0 [&_svg]:size-4">
+				{icon}
+			</span>
+			<span className={className}>{children}</span>
+		</div>
+	);
+}
+
+function StepSeparator({ children }: { children: ReactNode }) {
+	return (
+		<div className="text-fd-muted-foreground before:bg-fd-border after:bg-fd-border flex items-center gap-2 text-sm before:h-px before:flex-1 after:h-px after:flex-1">
+			{children}
+		</div>
+	);
+}
+
 function Hero() {
 	return (
 		<section className="flex flex-col gap-4">
 			<h1 className="text-4xl leading-[1.08] font-semibold tracking-tight text-balance italic sm:text-5xl">
 				A worktree copies what <code className="bg-transparent! p-0!">git</code> tracks;
-					<span className="block">
-						<code className="text-fd-primary bg-transparent! p-0!">gitto</code> copies what you were working in.
-					</span>
+				<span className="block">
+					<code className="text-fd-primary bg-transparent! p-0!">gitto</code> copies what you were working in.
+				</span>
 			</h1>
 			<Prose>
-				Three agents on three branches means three checkouts. A worktree hands each one the tracked files and
-				stops there, so every lane resolves its dependencies and runs its build again before any work starts.
+				Three agents on three branches means three checkouts, and a worktree hands each one the tracked files
+				and stops there.
 			</Prose>
+			<div className="flex max-w-prose flex-col gap-2">
+				<Step icon={<GitBranch />}>git worktree add ../auth-fix -b auth-fix</Step>
+				<StepSeparator>Preparing worktree</StepSeparator>
+				<Step icon={<FolderOpen />}>cd ../auth-fix &amp;&amp; npm test</Step>
+				<Step icon={<CircleX />}>vitest: command not found</Step>
+				<Step icon={<Loader2 className="animate-spin" />} className="shimmer">
+					installing 1,284 packages
+				</Step>
+			</div>
+			<Prose>The usual ways to live with that:</Prose>
 			<ol className="max-w-prose list-inside list-decimal">
 				<li>Keep a pool of checkouts and reset them by hand.</li>
 				<li>Install and build again in every lane.</li>
 				<li>Work on one branch at a time.</li>
 			</ol>
 			<Prose>
-				A pool drifts: a slot's branch changes and its state does not, and the directory name stops saying what
-				it holds. Building again is minutes per lane, forever. Working serially is the thing you were trying to
-				stop doing.
+				Discipline? A pool of three drifts into twenty-seven, and the slot labelled <code>main</code> turns out
+				to be three weeks behind. Copying was never the expensive part. APFS and btrfs have shared blocks on
+				write for a decade, and git has never asked them for it.
+			</Prose>
+			<Prose>
+				The canonical checkout is the one nobody works in. Every lane is a copy of it that starts finished, and
+				the two share their storage until one of them writes.
 			</Prose>
 		</section>
 	);
