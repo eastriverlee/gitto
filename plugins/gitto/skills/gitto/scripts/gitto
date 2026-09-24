@@ -546,6 +546,18 @@ recordSubmoduleHeads() {
     2>/dev/null || true
 }
 
+discardAdoptionScaffolding() {
+  repositoryPath="$1"
+  git -C "$repositoryPath" for-each-ref --format='%(refname)' 'refs/gitto-adopted/*' 2>/dev/null |
+    while read -r scaffoldRef; do
+      [ -n "$scaffoldRef" ] || continue
+      git -C "$repositoryPath" update-ref -d "$scaffoldRef" </dev/null
+    done
+  git -C "$repositoryPath" submodule foreach --recursive --quiet \
+    'git for-each-ref --format="%(refname)" "refs/gitto-adopted/*" | while read -r stale; do [ -n "$stale" ] && git update-ref -d "$stale"; done' \
+    >/dev/null 2>&1 || true
+}
+
 restoreHeadWithoutTouchingFiles() {
   repositoryPath="$1"
   recordedCommit="$2"
@@ -632,7 +644,7 @@ adoptWorktree() {
     read -r submoduleGitDirectory || break
     read -r originalMarker || break
     [ -n "$submodulePath" ] || continue
-    [ -d "$targetPath/$submodulePath" ] || continue
+    [ -f "$targetPath/$submodulePath/.git" ] || continue
     printf 'gitdir: %s\n' "$targetPath/.git${submoduleGitDirectory#"$hostGitDirectory"}" \
       > "$targetPath/$submodulePath/.git"
     git -C "$targetPath/$submodulePath" fetch --quiet "$submoduleGitDirectory" \
@@ -653,6 +665,7 @@ adoptWorktree() {
   repointCanonicalReferences "$targetPath" "$canonicalPath"
   echo "$canonicalPath" > "$targetPath/.gitto"
   excludeCloneMarker "$targetPath"
+  discardAdoptionScaffolding "$targetPath"
   rm -f "$adoptionRecordFile"
 
   echo "  history now lives in $(basename "$targetPath")/.git, copied from the canonical"
@@ -665,6 +678,15 @@ abandonAdoption() {
   echo "gitto: restoring $(basename "$adoptionUnderway") as a worktree" >&2
   rm -rf "$adoptionUnderway/.git"
   printf '%s\n' "$adoptionSavedMarker" > "$adoptionUnderway/.git"
+  [ -f "${adoptionRecordFile:-}" ] && while read -r submodulePath; do
+    read -r ignoredCommit || break
+    read -r ignoredBranch || break
+    read -r ignoredGitDirectory || break
+    read -r originalMarker || break
+    [ -n "$submodulePath" ] || continue
+    [ -f "$adoptionUnderway/$submodulePath/.git" ] || continue
+    printf '%s\n' "$originalMarker" > "$adoptionUnderway/$submodulePath/.git"
+  done < "$adoptionRecordFile"
   adoptionUnderway=""
 }
 

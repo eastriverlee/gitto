@@ -438,12 +438,66 @@ adoptsAWorktreeInPlace() {
   expectEqual 'the host stops registering it' '1' "$(git -C "$host" worktree list | wc -l | tr -d ' ')"
   expectEqual 'it records where it came from' "$canonical" "$(cat "$leaf/.gitto")"
   expectMissing 'and the record stays out of git status' "$(git -C "$leaf" status --porcelain)" '.gitto'
+  expectMissing 'and no scaffolding refs are left behind' \
+    "$(git -C "$leaf" for-each-ref --format='%(refname)' 2>/dev/null)" 'gitto-adopted'
+  expectMissing 'at any submodule depth either' \
+    "$(git -C "$leaf" submodule foreach --recursive --quiet 'git for-each-ref --format="%(refname)"' 2>/dev/null)" 'gitto-adopted'
 }
 
 refusesToAdoptWhatIsAlreadyIndependent() {
   canonical=$(makeCanonical solo)
   output=$(runIn "$canonical" adopt "$canonical" 2>&1 || true)
   expectContains 'says it is neither a clone nor a worktree' "$output" 'worktree'
+}
+
+makeNestedWorktree() {
+  root="$laboratory/$1"
+  mkdir -p "$root"
+  makeRepository "$root/deep"
+  makeRepository "$root/middle"
+  git -C "$root/middle" submodule add -q "$root/deep" vendor/deep
+  git -C "$root/middle" commit -qm submodule
+  makeRepository "$root/origin"
+  git -C "$root/origin" submodule add -q "$root/middle" vendor/middle
+  git -C "$root/origin" commit -qm submodule
+  git clone -q --recursive "$root/origin" "$root/canonical" 2>/dev/null
+  git clone -q "$root/origin" "$root/host" 2>/dev/null
+  git -C "$root/host" worktree add -q "$root/leaf" -b leaf 2>/dev/null
+  git -C "$root/leaf" submodule update -q --init --recursive 2>/dev/null
+  echo "$root"
+}
+
+leavesIndependentSubmodulesAlone() {
+  root=$(makeNestedWorktree independent)
+  inner=$root/leaf/vendor/middle/vendor/deep
+  rm -f "$inner/.git"
+  git clone -q "$root/deep" "$root/spare" 2>/dev/null
+  mv "$root/spare/.git" "$inner/.git"
+  rm -rf "$root/spare"
+
+  runIn "$root/leaf" adopt "$root/canonical" >/dev/null 2>&1
+
+  expectPath 'the worktree still becomes a clone' "$root/leaf/.git/HEAD"
+  expectPath 'and a submodule holding its own repository keeps it' "$inner/.git/HEAD"
+}
+
+restoresEverySubmoduleMarkerWhenItGivesUp() {
+  root=$(makeNestedWorktree giveup)
+  shallow=$root/leaf/vendor/middle
+  deep=$root/leaf/vendor/middle/vendor/deep
+  beforeMarker=$(cat "$shallow/.git")
+
+  chmod 444 "$deep/.git"
+  runIn "$root/leaf" adopt "$root/canonical" >/dev/null 2>&1 || true
+  chmod 644 "$deep/.git" 2>/dev/null || true
+
+  expectContains 'it goes back to being a worktree' "$(cat "$root/leaf/.git")" 'worktrees'
+  expectEqual 'and puts every submodule marker back' "$beforeMarker" "$(cat "$shallow/.git")"
+  if git -C "$root/leaf" submodule status --recursive >/dev/null 2>&1; then
+    report pass 'so the worktree reads normally again'
+  else
+    report fail 'so the worktree reads normally again' 'submodule status still fails'
+  fi
 }
 
 for testName in \
@@ -471,7 +525,9 @@ for testName in \
   everyManifestAgreesOnTheVersion \
   keepsItsMarkerOutOfTheWay \
   adoptsAWorktreeInPlace \
-  refusesToAdoptWhatIsAlreadyIndependent
+  refusesToAdoptWhatIsAlreadyIndependent \
+  leavesIndependentSubmodulesAlone \
+  restoresEverySubmoduleMarkerWhenItGivesUp
 do
   reportsBefore=$((passed + failed))
   "$testName" || report fail "$testName" 'the test itself failed'
