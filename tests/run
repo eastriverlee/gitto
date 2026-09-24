@@ -3,6 +3,7 @@ set -eu
 
 gitto=${GITTO:-$(cd "$(dirname "$0")/.." && pwd)/plugins/gitto/skills/gitto/scripts/gitto}
 laboratory=$(mktemp -d)
+mkdir -p "$laboratory/empty-home"
 passed=0
 failed=0
 
@@ -123,7 +124,7 @@ resolvesNestedSubmodules() {
   expectContains 'a nested submodule resolves inside the clone' "$deepGitDirectory" "$root/canonical-lane/.git"
   diagnosis=$(runIn "$root/canonical" doctor lane 2>&1)
   expectMissing 'and no submodule is reported as escaping' "$diagnosis" 'history outside this clone'
-  expectContains 'and doctor still says the clone is clean' "$diagnosis" 'nothing points at the canonical'
+  expectContains 'and doctor still says the clone is clean' "$diagnosis" 'nothing git can see'
   if runIn "$root/canonical" doctor lane >/dev/null 2>&1; then
     report pass 'and doctor exits zero on a healthy clone with submodules'
   else
@@ -183,7 +184,7 @@ survivesSpacesInPaths() {
   git clone -q "$root/origin" "$root/my canonical" 2>/dev/null
   runIn "$root/my canonical" new lane >/dev/null 2>&1
   diagnosis=$( cd "$root/my canonical" && "$gitto" doctor lane 2>&1 )
-  expectContains 'a clone under a path with a space is clean' "$diagnosis" 'nothing points at the canonical'
+  expectContains 'a clone under a path with a space is clean' "$diagnosis" 'nothing git can see'
   expectMissing 'no phantom host is reported at the space' "$diagnosis" 'hosts'
   removal=$( cd "$root/my canonical" && "$gitto" remove lane 2>&1 )
   expectContains 'and it can be removed' "$removal" 'removed'
@@ -344,10 +345,10 @@ reportsPlantedReferences() {
   canonical=$(makeCanonical planted)
   runIn "$canonical" new clean >/dev/null 2>&1
   clean=$( cd "$canonical" && "$gitto" doctor clean 2>&1 )
-  expectContains 'a clean clone reports nothing' "$clean" 'nothing points at the canonical'
+  expectContains 'a clean clone reports nothing' "$clean" 'nothing git can see'
   ln -s file.txt "$canonical-clean/nearby"
   relative=$( cd "$canonical" && "$gitto" doctor clean 2>&1 )
-  expectContains 'a relative symlink inside the clone is left alone' "$relative" 'nothing points at the canonical'
+  expectContains 'a relative symlink inside the clone is left alone' "$relative" 'nothing git can see'
 
   ln -s "$canonical/file.txt" "$canonical-clean/borrowed"
   planted=$( cd "$canonical" && "$gitto" doctor clean 2>&1 )
@@ -419,6 +420,32 @@ checkRefusalOn() {
 }
 
 printf 'gitto tests\n\n'
+readsSettingsGitCannotSee() {
+  canonical=$(makeCanonical settings)
+  runIn "$canonical" new lane >/dev/null
+  lane=$(cd "$canonical-lane" && pwd -P)
+
+  quiet=$(HOME="$laboratory/empty-home" runIn "$canonical" doctor lane 2>&1)
+  expectContains 'a settings file nobody wrote is not reported' "$quiet" 'nothing git can see'
+
+  mkdir -p "$laboratory/planted-home/.ssh"
+  printf 'Host box\n  ProxyCommand %s/tools/wrapper %%h\n' "$lane" \
+    > "$laboratory/planted-home/.ssh/config"
+  found=$(HOME="$laboratory/planted-home" runIn "$canonical" doctor lane 2>&1)
+  expectContains 'a settings file naming the clone is reported' "$found" 'outside git'
+  expectContains 'and it says which file' "$found" '.ssh/config'
+}
+
+recordsWhatAdoptionCost() {
+  canonical=$(makeCanonical cost)
+  git -C "$canonical" worktree add --quiet -b taken "$canonical-taken" >/dev/null 2>&1
+  runIn "$canonical-taken" adopt "$canonical" >/dev/null
+
+  listing=$(runIn "$canonical" list --json)
+  expectMissing 'an adopted clone carries a disk figure' "$listing" '"diskKilobytes": null'
+  expectContains 'and the clone is in the listing' "$listing" '"name": "taken"'
+}
+
 adoptsAWorktreeInPlace() {
   canonical=$(makeCanonical nest)
   host=$(dirname "$canonical")/nest-host
@@ -436,7 +463,7 @@ adoptsAWorktreeInPlace() {
   expectEqual 'every change survives exactly' "$before" "$(git -C "$leaf" status --porcelain)"
   expectEqual 'the branch survives' 'fix/leaf-holds-a-slash' "$(git -C "$leaf" rev-parse --abbrev-ref HEAD)"
   expectEqual 'the host stops registering it' '1' "$(git -C "$host" worktree list | wc -l | tr -d ' ')"
-  expectEqual 'it records where it came from' "$canonical" "$(cat "$leaf/.gitto")"
+  expectEqual 'it records where it came from' "$(cd "$canonical" && pwd -P)" "$(cat "$leaf/.gitto")"
   expectMissing 'and the record stays out of git status' "$(git -C "$leaf" status --porcelain)" '.gitto'
   expectMissing 'and no scaffolding refs are left behind' \
     "$(git -C "$leaf" for-each-ref --format='%(refname)' 2>/dev/null)" 'gitto-adopted'
@@ -525,6 +552,8 @@ for testName in \
   everyManifestAgreesOnTheVersion \
   keepsItsMarkerOutOfTheWay \
   adoptsAWorktreeInPlace \
+  readsSettingsGitCannotSee \
+  recordsWhatAdoptionCost \
   refusesToAdoptWhatIsAlreadyIndependent \
   leavesIndependentSubmodulesAlone \
   restoresEverySubmoduleMarkerWhenItGivesUp

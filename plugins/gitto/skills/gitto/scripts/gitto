@@ -62,7 +62,7 @@ jsonString() {
 }
 
 absolutePathOf() {
-  (cd "$1" && pwd)
+  (cd "$1" && pwd -P)
 }
 
 physicalPathOf() {
@@ -180,6 +180,28 @@ repointCanonicalReferences() {
   esac
 }
 
+namesThisPathOutsideGit() {
+  inspectedPath="$1"
+  for settingsFile in "$HOME/.ssh/config" "$HOME/.gitconfig" /etc/fstab; do
+    [ -f "$settingsFile" ] || continue
+    grep -qF "$inspectedPath" "$settingsFile" 2>/dev/null &&
+      echo "  outside git  $settingsFile names this path"
+  done
+  for settingsDirectory in \
+    "$HOME/Library/LaunchAgents" /Library/LaunchDaemons \
+    /etc/systemd/system "$HOME/.config/systemd/user"
+  do
+    [ -d "$settingsDirectory" ] || continue
+    grep -rlF "$inspectedPath" "$settingsDirectory" 2>/dev/null |
+      while read -r namingFile; do
+        [ -n "$namingFile" ] && echo "  outside git  $namingFile names this path"
+      done
+  done
+  crontab -l 2>/dev/null | grep -qF "$inspectedPath" &&
+    echo "  outside git  your crontab names this path"
+  return 0
+}
+
 reportCanonicalReferences() {
   clonePath="$1"
   canonicalPath="$2"
@@ -209,6 +231,7 @@ reportCanonicalReferences() {
               echo "  submodule    history outside this clone: $submoduleGitDirectory"
             fi
           done
+        namesThisPathOutsideGit "$clonePath"
     } 2>/dev/null
   )
   [ -n "$remainingReferences" ] || return 0
@@ -467,7 +490,7 @@ diagnoseClone() {
     if [ -n "$findings" ]; then
       echo "$findings"
     else
-      echo "  nothing points at the canonical"
+      echo "  nothing git can see points at the canonical"
     fi
   done
 }
@@ -625,7 +648,9 @@ adoptWorktree() {
 
   stagedGitDirectory="$targetPath/.git.gitto-adopting"
   [ -e "$stagedGitDirectory" ] && fail "something is already at $stagedGitDirectory"
+  freeKilobytesBeforeCopy=$(freeKilobytesIn "$targetPath")
   copyGitDirectory "$canonicalPath/.git" "$stagedGitDirectory"
+  freeKilobytesAfterCopy=$(freeKilobytesIn "$targetPath")
   rm -rf "$stagedGitDirectory/worktrees"
   git --git-dir="$stagedGitDirectory" config --unset core.worktree 2>/dev/null || true
   git --git-dir="$stagedGitDirectory" config core.bare false
@@ -666,11 +691,15 @@ adoptWorktree() {
   echo "$canonicalPath" > "$targetPath/.gitto"
   excludeCloneMarker "$targetPath"
   discardAdoptionScaffolding "$targetPath"
+  adoptedKilobytes=$((freeKilobytesBeforeCopy - freeKilobytesAfterCopy))
+  [ "$adoptedKilobytes" -ge 0 ] || adoptedKilobytes=0
+  git -C "$targetPath" config --local gitto.diskKilobytes "$adoptedKilobytes"
   rm -f "$adoptionRecordFile"
 
   echo "  history now lives in $(basename "$targetPath")/.git, copied from the canonical"
   echo "  $(basename "$hostPath") no longer registers it as a worktree"
   echo "  branch $branchName, $submoduleCount submodules, nothing moved"
+  echo "  $(humanKilobytes "$adoptedKilobytes") of disk, since only the history was copied"
 }
 
 abandonAdoption() {

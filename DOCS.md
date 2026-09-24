@@ -269,12 +269,13 @@ gitto doctor [<name>] [--json]
 
 Reports what still points outside a clone after the copy: symbolic links into the
 canonical, virtual environments holding the old path, submodule history that did
-not come along, and worktrees the clone hosts for someone else.
+not come along, worktrees the clone hosts for someone else, and settings files in
+fixed places that name the clone by path.
 
 ```
 $ gitto doctor
 auth-fix
-  nothing points at the canonical
+  nothing git can see points at the canonical
 ```
 
 ### What it can see
@@ -283,11 +284,19 @@ Everything git records, and the two cases that bite most often: a symbolic link
 whose target resolves outside the clone, and a virtual environment whose
 `activate` exports the path it was built at.
 
+It also reads a short list of settings files that live at a fixed address, since
+a path written there survives every move and reports nothing when it breaks:
+`~/.ssh/config`, `~/.gitconfig`, `/etc/fstab`, launch agents under
+`~/Library/LaunchAgents`, unit files under `~/.config/systemd/user`, and the
+calling user's crontab.
+
 ### What it cannot see
 
-Anything outside git that names a path: an ssh config, a launch agent, an editor
-workspace, a shell sitting in the directory. A clean report means the references
-git knows about are in order. It does not mean the directory is safe to delete.
+Anything else outside git that names a path: an editor workspace, a build cache,
+a shell sitting in the directory, a script in a place nobody thought to look. The
+fixed list above is a sample, so a clean report means the references git knows
+about are in order and those few files say nothing. It does not mean the
+directory is safe to delete.
 
 ## remove
 
