@@ -105,7 +105,6 @@ const favicon = readFileSync(join(repository, 'gitto-mark.svg'), 'utf8')
 	.replace('>', '>' + themedInk);
 writeFileSync(join(assets, 'favicon.svg'), favicon);
 
-writeFileSync(join(assets, '_redirects'), '/* /__spa-fallback.html 200\n');
 writeFileSync(
 	join(assets, '_headers'),
 	['/install', '  content-type: text/plain; charset=utf-8', '/gitto', '  content-type: text/plain; charset=utf-8', '/skill', '  content-type: text/plain; charset=utf-8', ''].join('\n'),

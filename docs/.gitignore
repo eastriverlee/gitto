@@ -10,7 +10,6 @@
 # written by scripts/content.ts
 /public/sitemap.xml
 /public/robots.txt
-/public/_redirects
 /public/_headers
 /public/install
 /public/gitto

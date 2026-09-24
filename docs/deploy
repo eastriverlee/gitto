@@ -3,4 +3,5 @@ set -eu
 
 cd "$(dirname "$0")"
 bun run build
-exec monkeys run wrangler pages deploy build/client --project-name gitto
+cp build/client/__spa-fallback.html build/client/404.html
+exec monkeys run wrangler pages deploy build/client --project-name gitto --branch main
