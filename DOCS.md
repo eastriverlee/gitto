@@ -401,6 +401,16 @@ The plugin carries its own copy, which each client updates on its own:
 `claude plugin update gitto@13e7`, or for Codex,
 `codex plugin marketplace upgrade 13e7` followed by a remove and add.
 
+### Copies older than this command
+
+`update` arrived in 0.3.0, so anything older prints the usage when asked for
+it. Run the install line again, which replaces the script whatever version it
+holds.
+
+```sh
+curl -fsSL https://gitto.13e7.co/install | sh
+```
+
 ## version
 
 ```
