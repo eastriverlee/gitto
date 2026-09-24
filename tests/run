@@ -536,6 +536,71 @@ restoresEverySubmoduleMarkerWhenItGivesUp() {
   fi
 }
 
+namesTheWorktreesTheCanonicalHosts() {
+  canonical=$(makeCanonical hostsnamed)
+  root=$(dirname "$canonical")
+  git -C "$canonical" worktree add -q "$root/outside" -b outside 2>/dev/null
+
+  diagnosis=$(runIn "$canonical" doctor 2>&1)
+
+  expectContains 'doctor looks at the canonical, not only at clones' "$diagnosis" 'canonical'
+  expectContains 'and names the worktree it hosts outside itself' "$diagnosis" "$root/outside"
+}
+
+saysTheCanonicalHostsNothingWhenItDoesNot() {
+  canonical=$(makeCanonical hostsnothing)
+
+  diagnosis=$(runIn "$canonical" doctor 2>&1)
+
+  expectContains 'a canonical hosting nothing says so' "$diagnosis" 'hosts no worktree'
+  expectMissing 'and reports no marker trouble' "$diagnosis" 'its marker points'
+}
+
+catchesAMarkerPointingAtAnotherCheckout() {
+  canonical=$(makeCanonical markermoved)
+  root=$(dirname "$canonical")
+  git -C "$canonical" worktree add -q "$root/outside" -b outside 2>/dev/null
+  makeRepository "$root/occupant"
+  printf 'gitdir: %s\n' "$root/occupant/.git" > "$root/outside/.git"
+
+  diagnosis=$(runIn "$canonical" doctor 2>&1)
+
+  expectContains 'a marker resolving to a checkout that never registered it is reported' \
+    "$diagnosis" 'is not this checkout'
+  expectContains 'and the report names where it points' "$diagnosis" "$root/occupant/.git"
+}
+
+catchesAMarkerWhoseTargetIsGone() {
+  canonical=$(makeCanonical markergone)
+  root=$(dirname "$canonical")
+  git -C "$canonical" worktree add -q "$root/outside" -b outside 2>/dev/null
+  printf 'gitdir: %s\n' "$root/nowhere/.git/worktrees/outside" > "$root/outside/.git"
+
+  diagnosis=$(runIn "$canonical" doctor 2>&1)
+
+  expectContains 'a marker pointing at a gitdir that is gone is reported' "$diagnosis" 'which is gone'
+}
+
+namesAHostedWorktreeWhoseDirectoryVanished() {
+  canonical=$(makeCanonical hostedgone)
+  root=$(dirname "$canonical")
+  git -C "$canonical" worktree add -q "$root/outside" -b outside 2>/dev/null
+  rm -rf "$root/outside"
+
+  diagnosis=$(runIn "$canonical" doctor 2>&1)
+
+  expectContains 'a registration whose directory vanished is reported' "$diagnosis" 'nothing is there'
+}
+
+seesAWorktreeHostedAtSubmoduleDepth() {
+  root=$(makeNestedWorktree deephost)
+  git -C "$root/canonical/vendor/middle" worktree add -q "$root/deepleaf" -b deepleaf 2>/dev/null
+
+  diagnosis=$(runIn "$root/canonical" doctor 2>&1)
+
+  expectContains 'a worktree a submodule registers is named too' "$diagnosis" "$root/deepleaf"
+}
+
 for testName in \
   carriesUntrackedState \
   resolvesNestedSubmodules \
@@ -566,7 +631,13 @@ for testName in \
   refusesToUpdateAScriptThatFollowsACheckout \
   refusesToAdoptWhatIsAlreadyIndependent \
   leavesIndependentSubmodulesAlone \
-  restoresEverySubmoduleMarkerWhenItGivesUp
+  restoresEverySubmoduleMarkerWhenItGivesUp \
+  namesTheWorktreesTheCanonicalHosts \
+  saysTheCanonicalHostsNothingWhenItDoesNot \
+  catchesAMarkerPointingAtAnotherCheckout \
+  catchesAMarkerWhoseTargetIsGone \
+  namesAHostedWorktreeWhoseDirectoryVanished \
+  seesAWorktreeHostedAtSubmoduleDepth
 do
   reportsBefore=$((passed + failed))
   "$testName" || report fail "$testName" 'the test itself failed'

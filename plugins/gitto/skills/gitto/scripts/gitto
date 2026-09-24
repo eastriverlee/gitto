@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-gittoVersion=0.3.0
+gittoVersion=0.4.0
 
 updateInstalledScript() {
   runningScript=$0
@@ -259,7 +259,7 @@ reportCanonicalReferences() {
           echo "  virtualenv   $activationScript"
         fi
       done
-      worktreesHostedOutside "$clonePath" | sed 's/^/  hosts        /'
+      reportHostedWorktrees "$clonePath"
       git -C "$clonePath" submodule foreach --recursive --quiet \
         'git rev-parse --absolute-git-dir' 2>/dev/null \
         | while read -r submoduleGitDirectory; do
@@ -493,6 +493,37 @@ worktreesHostedOutside() {
     done
 }
 
+markerTargetOf() {
+  worktreePath="$1"
+  [ -f "$worktreePath/.git" ] || return 1
+  sed -n 's/^gitdir: //p' "$worktreePath/.git" | head -1
+}
+
+reportHostedWorktrees() {
+  hostPath="$1"
+  worktreesHostedOutside "$hostPath" | while read -r hostedPath; do
+    if [ ! -d "$hostedPath" ]; then
+      echo "  hosts        $hostedPath (registered, but nothing is there)"
+      continue
+    fi
+    if [ -d "$hostedPath/.git" ]; then
+      echo "  hosts        $hostedPath (registered, but it carries its own repository now)"
+      continue
+    fi
+    markerTarget=$(markerTargetOf "$hostedPath") || {
+      echo "  hosts        $hostedPath (registered, but it has no gitdir marker)"
+      continue
+    }
+    if [ ! -d "$markerTarget" ]; then
+      echo "  hosts        $hostedPath (its marker points at $markerTarget, which is gone)"
+    elif [ "${markerTarget#"$hostPath"/}" = "$markerTarget" ]; then
+      echo "  hosts        $hostedPath (its marker points into $markerTarget, which is not this checkout)"
+    else
+      echo "  hosts        $hostedPath"
+    fi
+  done
+}
+
 removeClone() {
   [ $# -ge 1 ] || printUsage
   canonicalPath=$(resolveCanonical)
@@ -518,6 +549,13 @@ diagnoseClone() {
     inspectedPaths="$canonicalPath-$1"
   else
     inspectedPaths=$(eachClone "$canonicalPath")
+    echo "$(basename "$canonicalPath")  canonical"
+    hostedFindings=$(reportHostedWorktrees "$canonicalPath")
+    if [ -n "$hostedFindings" ]; then
+      echo "$hostedFindings"
+    else
+      echo "  it hosts no worktree that lives outside it"
+    fi
   fi
   [ -n "$inspectedPaths" ] || { echo "no clones"; return; }
   echo "$inspectedPaths" | while read -r clonePath; do

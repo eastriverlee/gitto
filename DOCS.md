@@ -272,8 +272,13 @@ canonical, virtual environments holding the old path, submodule history that did
 not come along, worktrees the clone hosts for someone else, and settings files in
 fixed places that name the clone by path.
 
+With no name it reports the canonical as well. A canonical hosts worktrees like
+any other checkout, and it is the one nobody thinks to check before renaming it.
+
 ```
 $ gitto doctor
+storefront  canonical
+  it hosts no worktree that lives outside it
 auth-fix
   nothing git can see points at the canonical
 ```
@@ -283,6 +288,14 @@ auth-fix
 Everything git records, and the two cases that bite most often: a symbolic link
 whose target resolves outside the clone, and a virtual environment whose
 `activate` exports the path it was built at.
+
+For every worktree a checkout hosts, at the top level and at each submodule
+depth, it reads that worktree's own `gitdir` marker and says when the two
+disagree: the directory is gone, the marker names a gitdir that no longer
+exists, or the marker resolves into a different checkout. That last case is the
+quiet one. A marker holds an absolute path, so renaming a checkout frees that
+address for whatever moves in next, and the marker goes on resolving to a
+repository that never registered it. Git reports nothing on either side.
 
 It also reads a short list of settings files that live at a fixed address, since
 a path written there survives every move and reports nothing when it breaks:
