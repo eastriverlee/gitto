@@ -96,7 +96,14 @@ cpSync(join(skill, 'scripts', 'gitto'), join(assets, 'gitto'));
 cpSync(join(skill, 'SKILL.md'), join(assets, 'skill'));
 cpSync(join(repository, 'gitto.svg'), join(assets, 'gitto.svg'));
 cpSync(join(repository, 'gitto-mark.svg'), join(assets, 'gitto-mark.svg'));
-cpSync(join(repository, 'favicon.svg'), join(assets, 'favicon.svg'));
+
+const themedInk = '<style>:root{--ink:#100f0d}@media(prefers-color-scheme:dark){:root{--ink:#fff}}</style>';
+const favicon = readFileSync(join(repository, 'gitto-mark.svg'), 'utf8')
+	.replaceAll('fill:currentColor', 'fill:var(--ink)')
+	.replace('role="img" aria-label="gitto" ', '')
+	.replace('viewBox="0 0 126 92"', 'viewBox="0 -17 126 126"')
+	.replace('>', '>' + themedInk);
+writeFileSync(join(assets, 'favicon.svg'), favicon);
 
 writeFileSync(join(assets, '_redirects'), '/* /__spa-fallback.html 200\n');
 writeFileSync(
