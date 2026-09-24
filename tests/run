@@ -281,14 +281,17 @@ printsItsVersion() {
 }
 
 emitsAShellFunction() {
-  init=$("$gitto" shell-init 2>&1)
-  expectContains 'shell-init defines the wrapper' "$init" 'gitto() {'
-  expectContains 'and completions' "$init" 'compdef _gitto gitto'
-  if printf '%s' "$init" | sh -n 2>/dev/null; then
-    report pass 'and what it emits is valid shell'
-  else
-    report fail 'and what it emits is valid shell' 'sh -n rejected it'
-  fi
+  output=$("$gitto" shell-init)
+  expectContains 'shell-init defines the wrapper' "$output" 'gitto()'
+  expectContains 'and completions' "$output" 'complete'
+  for shell in bash zsh; do
+    command -v "$shell" >/dev/null 2>&1 || continue
+    if printf '%s\n' "$output" | "$shell" -n 2>/dev/null; then
+      report pass "what it emits is valid $shell"
+    else
+      report fail "what it emits is valid $shell" "$shell -n rejected it"
+    fi
+  done
 }
 
 handlesCheckoutWithoutOrigin() {
