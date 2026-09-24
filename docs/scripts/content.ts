@@ -15,6 +15,8 @@ const slugOverrides: Record<string, string> = {
 	'Why not use a worktree?': 'worktree',
 	'Does this work on Linux?': 'linux',
 	'What happens on ext4?': 'ext4',
+	'Can I run it from inside a clone?': 'from-inside-a-clone',
+	'How do I keep the canonical current?': 'keeping-current',
 	'Can I clone a clone?': 'clone-a-clone',
 	'How do I undo one?': 'undo',
 	'What if the canonical moves?': 'moving-the-canonical',
@@ -223,6 +225,14 @@ const retiredRoutes: Record<string, string> = {
 	'/docs/questions/clone-a-clone': '/docs/questions/from-inside-a-clone',
 	'/docs/commands': '/docs/commands/new',
 };
+const reachable = new Set(
+	written.map((path) => `${docsRoute}/${path === 'index' ? '' : path.replace(/\/index$/, '')}`),
+);
+for (const [from, to] of Object.entries(retiredRoutes)) {
+	if (!reachable.has(to)) {
+		throw new Error(`${from} redirects to ${to}, which no page answers`);
+	}
+}
 writeFileSync(
 	join(assets, '_redirects'),
 	Object.entries(retiredRoutes)
