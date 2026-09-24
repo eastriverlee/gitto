@@ -65,6 +65,13 @@ git clone https://github.com/eastriverlee/gitto
 sh gitto/plugins/gitto/skills/gitto/scripts/install.sh
 ```
 
+The suite builds a repository for each case and runs the real script against
+it, including a disk image without block sharing.
+
+```sh
+sh gitto/tests/run
+```
+
 ## Commands
 
 ```

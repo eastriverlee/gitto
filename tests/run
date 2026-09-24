@@ -1,0 +1,262 @@
+#!/bin/sh
+set -eu
+
+gitto=${GITTO:-$(cd "$(dirname "$0")/.." && pwd)/plugins/gitto/skills/gitto/scripts/gitto}
+laboratory=$(mktemp -d)
+passed=0
+failed=0
+
+trap 'rm -rf "$laboratory"' EXIT
+
+report() {
+  outcome="$1"
+  description="$2"
+  detail="${3:-}"
+  if [ "$outcome" = pass ]; then
+    passed=$((passed + 1))
+    printf '  ok    %s\n' "$description"
+  else
+    failed=$((failed + 1))
+    printf '  FAIL  %s\n' "$description"
+    [ -z "$detail" ] || printf '%s\n' "$detail" | sed 's/^/          /'
+  fi
+}
+
+expectContains() {
+  description="$1"
+  haystack="$2"
+  needle="$3"
+  case "$haystack" in
+    *"$needle"*) report pass "$description" ;;
+    *) report fail "$description" "wanted: $needle
+got: $haystack" ;;
+  esac
+}
+
+expectMissing() {
+  description="$1"
+  haystack="$2"
+  needle="$3"
+  case "$haystack" in
+    *"$needle"*) report fail "$description" "did not want: $needle
+got: $haystack" ;;
+    *) report pass "$description" ;;
+  esac
+}
+
+expectPath() {
+  description="$1"
+  if [ -e "$2" ]; then report pass "$description"; else report fail "$description" "missing: $2"; fi
+}
+
+expectNoPath() {
+  description="$1"
+  if [ -e "$2" ]; then report fail "$description" "still there: $2"; else report pass "$description"; fi
+}
+
+git() {
+  command git -c protocol.file.allow=always -c init.defaultBranch=main \
+    -c user.email=test@example.com -c user.name=Test -c commit.gpgsign=false "$@"
+}
+
+makeRepository() {
+  repositoryPath="$1"
+  mkdir -p "$repositoryPath"
+  git -C "$repositoryPath" init -q
+  printf 'one\n' > "$repositoryPath/file.txt"
+  git -C "$repositoryPath" add -A
+  git -C "$repositoryPath" commit -qm first
+}
+
+makeCanonical() {
+  laboratoryName="$1"
+  root="$laboratory/$laboratoryName"
+  mkdir -p "$root"
+  makeRepository "$root/source"
+  git clone -q --bare "$root/source" "$root/origin" 2>/dev/null
+  git clone -q "$root/origin" "$root/canonical" 2>/dev/null
+  echo "$root/canonical"
+}
+
+runIn() {
+  checkoutPath="$1"
+  shift
+  ( cd "$checkoutPath" && "$gitto" "$@" )
+}
+
+carriesUntrackedState() {
+  canonical=$(makeCanonical carries)
+  mkdir -p "$canonical/node_modules"
+  printf 'built\n' > "$canonical/node_modules/marker"
+  printf 'node_modules/\n' > "$canonical/.gitignore"
+  git -C "$canonical" add -A && git -C "$canonical" commit -qm ignore
+  git -C "$canonical" push -q origin main
+  runIn "$canonical" new lane >/dev/null 2>&1
+  expectPath 'a clone carries ignored build state' "$canonical-lane/node_modules/marker"
+}
+
+resolvesNestedSubmodules() {
+  root="$laboratory/nested"
+  mkdir -p "$root"
+  makeRepository "$root/deep"
+  makeRepository "$root/middle"
+  git -C "$root/middle" submodule add -q "$root/deep" vendor/deep
+  git -C "$root/middle" commit -qm submodule
+  makeRepository "$root/origin"
+  git -C "$root/origin" submodule add -q "$root/middle" vendor/middle
+  git -C "$root/origin" commit -qm submodule
+  git clone -q --recursive "$root/origin" "$root/canonical" 2>/dev/null
+  runIn "$root/canonical" new lane >/dev/null 2>&1
+  deepGitDirectory=$(git -C "$root/canonical-lane/vendor/middle/vendor/deep" rev-parse --absolute-git-dir)
+  expectContains 'a nested submodule resolves inside the clone' "$deepGitDirectory" "$root/canonical-lane/.git"
+  diagnosis=$(runIn "$root/canonical" doctor lane 2>&1)
+  expectMissing 'and no submodule is reported as escaping' "$diagnosis" 'history outside this clone'
+  expectContains 'and doctor still says the clone is clean' "$diagnosis" 'nothing points at the canonical'
+  if runIn "$root/canonical" doctor lane >/dev/null 2>&1; then
+    report pass 'and doctor exits zero on a healthy clone with submodules'
+  else
+    report fail 'and doctor exits zero on a healthy clone with submodules' 'exit was non-zero'
+  fi
+}
+
+repointsHookPath() {
+  canonical=$(makeCanonical hooks)
+  git -C "$canonical" config core.hooksPath "$canonical/.githooks"
+  output=$(runIn "$canonical" new lane 2>&1)
+  expectContains 'an absolute hook path is repointed' "$output" 'repointed core.hooksPath'
+  configured=$(git -C "$canonical-lane" config --local --get core.hooksPath)
+  expectContains 'the repointed path is inside the clone' "$configured" "$canonical-lane"
+}
+
+dropsNestedWorktrees() {
+  canonical=$(makeCanonical nestedworktree)
+  git -C "$canonical" worktree add -q "$canonical/inside/extra" -b extra
+  runIn "$canonical" new lane >/dev/null 2>&1
+  expectNoPath 'a worktree kept inside the canonical is dropped' "$canonical-lane/inside/extra"
+  expectPath 'the canonical keeps its own' "$canonical/inside/extra"
+}
+
+refusesToOrphanWorktrees() {
+  root="$laboratory/hosting"
+  mkdir -p "$root"
+  makeRepository "$root/sub"
+  makeRepository "$root/origin"
+  git -C "$root/origin" submodule add -q "$root/sub" vendor/sub
+  git -C "$root/origin" commit -qm submodule
+  git clone -q --recursive "$root/origin" "$root/canonical" 2>/dev/null
+  runIn "$root/canonical" new lane >/dev/null 2>&1
+  git -C "$root/canonical-lane/vendor/sub" worktree add -q "$root/outside" -b outside
+  refusal=$( ( cd "$root/canonical" && "$gitto" remove lane 2>&1 ) || true )
+  expectContains 'removing a clone that hosts an outside worktree is refused' "$refusal" 'without a repository'
+  expectPath 'the clone survives the refusal' "$root/canonical-lane/.gitto"
+}
+
+refusesToLoseWork() {
+  canonical=$(makeCanonical losing)
+  runIn "$canonical" new lane >/dev/null 2>&1
+  printf 'edited\n' > "$canonical-lane/file.txt"
+  refusal=$( ( cd "$canonical" && "$gitto" remove lane 2>&1 ) || true )
+  expectContains 'a dirty clone is not removed' "$refusal" 'uncommitted changes'
+  git -C "$canonical-lane" checkout -q -- file.txt
+  printf 'new\n' > "$canonical-lane/second.txt"
+  git -C "$canonical-lane" add -A && git -C "$canonical-lane" commit -qm second
+  refusal=$( ( cd "$canonical" && "$gitto" remove lane 2>&1 ) || true )
+  expectContains 'an unpushed clone is not removed' "$refusal" 'no remote has'
+}
+
+survivesSpacesInPaths() {
+  root="$laboratory/with space"
+  mkdir -p "$root"
+  makeRepository "$root/origin"
+  git clone -q "$root/origin" "$root/my canonical" 2>/dev/null
+  runIn "$root/my canonical" new lane >/dev/null 2>&1
+  diagnosis=$( cd "$root/my canonical" && "$gitto" doctor lane 2>&1 )
+  expectContains 'a clone under a path with a space is clean' "$diagnosis" 'nothing points at the canonical'
+  expectMissing 'no phantom host is reported at the space' "$diagnosis" 'hosts'
+  removal=$( cd "$root/my canonical" && "$gitto" remove lane 2>&1 )
+  expectContains 'and it can be removed' "$removal" 'removed'
+}
+
+handlesCheckoutWithoutOrigin() {
+  root="$laboratory/noremote"
+  makeRepository "$root"
+  refusal=$( ( cd "$root" && "$gitto" new lane 2>&1 ) || true )
+  expectContains 'a checkout with no origin says so' "$refusal" 'no origin'
+  expectNoPath 'and leaves nothing behind' "$root-lane"
+  output=$( cd "$root" && "$gitto" new lane HEAD 2>&1 )
+  expectContains 'naming a revision works without a remote' "$output" 'branch lane on HEAD'
+}
+
+leavesSubmodulesAloneForHead() {
+  root="$laboratory/heads"
+  mkdir -p "$root"
+  makeRepository "$root/sub"
+  makeRepository "$root/origin"
+  git -C "$root/origin" submodule add -q "$root/sub" vendor/sub
+  git -C "$root/origin" commit -qm submodule
+  git clone -q --recursive "$root/origin" "$root/canonical" 2>/dev/null
+  printf 'two\n' > "$root/canonical/vendor/sub/file.txt"
+  git -C "$root/canonical/vendor/sub" commit -qam ahead
+  ahead=$(git -C "$root/canonical/vendor/sub" rev-parse HEAD)
+  runIn "$root/canonical" new asis HEAD >/dev/null 2>&1
+  kept=$(git -C "$root/canonical-asis/vendor/sub" rev-parse HEAD)
+  if [ "$kept" = "$ahead" ]; then
+    report pass 'HEAD leaves a submodule where the canonical had it'
+  else
+    report fail 'HEAD leaves a submodule where the canonical had it' "wanted $ahead, got $kept"
+  fi
+}
+
+reportsPlantedReferences() {
+  canonical=$(makeCanonical planted)
+  runIn "$canonical" new clean >/dev/null 2>&1
+  clean=$( cd "$canonical" && "$gitto" doctor clean 2>&1 )
+  expectContains 'a clean clone reports nothing' "$clean" 'nothing points at the canonical'
+  ln -s file.txt "$canonical-clean/nearby"
+  relative=$( cd "$canonical" && "$gitto" doctor clean 2>&1 )
+  expectContains 'a relative symlink inside the clone is left alone' "$relative" 'nothing points at the canonical'
+
+  ln -s "$canonical/file.txt" "$canonical-clean/borrowed"
+  planted=$( cd "$canonical" && "$gitto" doctor clean 2>&1 )
+  expectContains 'a symlink into the canonical is reported' "$planted" 'symlink'
+}
+
+refusesWhenBlocksCannotBeShared() {
+  image="$laboratory/nocow.dmg"
+  mount="/Volumes/GittoNoCow"
+  hdiutil create -quiet -size 60m -fs HFS+ -volname GittoNoCow "$image" >/dev/null 2>&1 || {
+    report pass 'a filesystem without block sharing is refused (skipped, no hdiutil)'
+    return 0
+  }
+  hdiutil attach -quiet -nobrowse "$image" >/dev/null 2>&1
+  makeRepository "$mount/canonical"
+  refusal=$( ( cd "$mount/canonical" && "$gitto" new lane HEAD 2>&1 ) || true )
+  leftover=$([ -e "$mount/canonical-lane" ] && echo yes || echo no)
+  hdiutil detach -quiet "$mount" >/dev/null 2>&1 || true
+  expectContains 'a filesystem without block sharing is refused' "$refusal" 'costs the full size'
+  if [ "$leftover" = no ]; then
+    report pass 'and no partial clone is left on it'
+  else
+    report fail 'and no partial clone is left on it' "$mount/canonical-lane survived"
+  fi
+}
+
+printf 'gitto tests\n\n'
+for testName in \
+  carriesUntrackedState \
+  resolvesNestedSubmodules \
+  repointsHookPath \
+  dropsNestedWorktrees \
+  refusesToOrphanWorktrees \
+  refusesToLoseWork \
+  survivesSpacesInPaths \
+  handlesCheckoutWithoutOrigin \
+  leavesSubmodulesAloneForHead \
+  reportsPlantedReferences \
+  refusesWhenBlocksCannotBeShared
+do
+  "$testName" || report fail "$testName" 'the test itself failed'
+done
+
+printf '\n%d passed, %d failed\n' "$passed" "$failed"
+[ "$failed" -eq 0 ]

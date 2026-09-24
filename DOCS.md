@@ -277,10 +277,10 @@ branch that no second worktree may check out.
 
 ### Does this work on Linux?
 
-The reflink path is written and has not been run. It calls
-`cp --reflink=always`, which fails loudly on a filesystem that cannot share
-blocks, and the probe measures the result either way, so a wrong answer refuses
-instead of quietly copying 13 GB.
+The script is POSIX and uses no BSD-only spelling, so the reflink path calls
+`cp --reflink=always` and reads free space through `df -k`. It has not been run
+on Linux. The probe measures what a copy actually consumed, so a filesystem it
+guesses wrong about refuses the clone rather than making a full copy of 13 GB.
 
 ### What happens on ext4?
 

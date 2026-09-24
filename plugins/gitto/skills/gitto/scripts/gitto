@@ -37,6 +37,13 @@ absolutePathOf() {
   (cd "$1" && pwd)
 }
 
+physicalPathOf() {
+  candidatePath="$1"
+  candidateParent=$(dirname "$candidatePath")
+  [ -d "$candidateParent" ] || { echo "$candidatePath"; return; }
+  echo "$(cd "$candidateParent" && pwd -P)/$(basename "$candidatePath")"
+}
+
 repositoryRootOf() {
   git -C "$1" rev-parse --show-toplevel 2>/dev/null
 }
@@ -60,10 +67,10 @@ requireIndependentCheckout() {
 }
 
 probeSizeInMegabytes=32
-probeSizeInBlocks=$((probeSizeInMegabytes * 1024 * 1024 / 512))
+probeSizeInKilobytes=$((probeSizeInMegabytes * 1024))
 
-freeBlocksIn() {
-  df -b "$1" | awk 'NR == 2 { print $4 }'
+freeKilobytesIn() {
+  df -k "$1" | awk 'NR == 2 { print $4 }'
 }
 
 copyCostsNothing() {
@@ -72,20 +79,20 @@ copyCostsNothing() {
   probeTarget="$3"
   probeDirectory="$4"
   rm -f "$probeTarget"
-  freeBlocksBefore=$(freeBlocksIn "$probeDirectory")
+  freeKilobytesBefore=$(freeKilobytesIn "$probeDirectory")
   case "$cloneKind" in
     clonefile) /bin/cp -c "$probeSource" "$probeTarget" 2>/dev/null || return 1 ;;
     reflink) cp --reflink=always "$probeSource" "$probeTarget" 2>/dev/null || return 1 ;;
   esac
-  freeBlocksAfter=$(freeBlocksIn "$probeDirectory")
-  [ $((freeBlocksBefore - freeBlocksAfter)) -lt $((probeSizeInBlocks / 4)) ]
+  freeKilobytesAfter=$(freeKilobytesIn "$probeDirectory")
+  [ $((freeKilobytesBefore - freeKilobytesAfter)) -lt $((probeSizeInKilobytes / 4)) ]
 }
 
 resolveCloneCommand() {
   probeDirectory="$1"
-  probeSource="$probeDirectory/.gitto-clone-probe"
-  probeTarget="$probeDirectory/.gitto-clone-probe-copy"
-  dd if=/dev/urandom of="$probeSource" bs=1m count="$probeSizeInMegabytes" 2>/dev/null
+  probeSource="$probeDirectory/.gitto-probe.$$"
+  probeTarget="$probeDirectory/.gitto-probe.$$.copy"
+  dd if=/dev/urandom of="$probeSource" bs=1048576 count="$probeSizeInMegabytes" 2>/dev/null
   for cloneKind in clonefile reflink; do
     if copyCostsNothing "$cloneKind" "$probeSource" "$probeTarget" "$probeDirectory"; then
       rm -f "$probeSource" "$probeTarget"
@@ -134,9 +141,11 @@ repointCanonicalReferences() {
   clonePath="$1"
   canonicalPath="$2"
   configuredHooksPath=$(git -C "$clonePath" config --local --get core.hooksPath || true)
-  case "$configuredHooksPath" in
+  [ -n "$configuredHooksPath" ] || return 0
+  resolvedHooksPath=$(physicalPathOf "$configuredHooksPath")
+  case "$resolvedHooksPath" in
     "$canonicalPath"/*)
-      relocatedHooksPath="$clonePath${configuredHooksPath#"$canonicalPath"}"
+      relocatedHooksPath="$clonePath${resolvedHooksPath#"$canonicalPath"}"
       git -C "$clonePath" config --local core.hooksPath "$relocatedHooksPath"
       echo "  repointed core.hooksPath at this clone's own hooks"
       ;;
@@ -151,17 +160,27 @@ reportCanonicalReferences() {
     {
       git -C "$clonePath" config --local --list | grep -F "$canonicalPrefix" | sed 's/^/  git config   /' || true
       find "$clonePath" -maxdepth 4 -type l -not -path '*/.git/*' -not -path '*/node_modules/*' \
-        -exec sh -c 'for link; do case $(readlink "$link") in "'"$canonicalPrefix"'"*) echo "  symlink      ${link} -> $(readlink "$link")";; esac; done' _ {} + 2>/dev/null || true
+        -exec sh -c 'prefix=$1; shift; for link; do
+            target=$(readlink "$link")
+            case $target in /*) ;; *) target="$(dirname "$link")/$target" ;; esac
+            parent=$(dirname "$target")
+            [ -d "$parent" ] && target="$(cd "$parent" && pwd -P)/$(basename "$target")"
+            case $target in "$prefix"*) echo "  symlink      $link -> $target" ;; esac
+          done' _ "$canonicalPrefix" {} + 2>/dev/null || true
       for activationScript in "$clonePath"/*/bin/activate "$clonePath"/.venv/bin/activate "$clonePath"/venv/bin/activate; do
         [ -f "$activationScript" ] || continue
-        grep -qF "$canonicalPrefix" "$activationScript" && echo "  virtualenv   $activationScript"
+        if grep -qF "$canonicalPrefix" "$activationScript"; then
+          echo "  virtualenv   $activationScript"
+        fi
       done
       worktreesHostedOutside "$clonePath" | sed 's/^/  hosts        /'
-      git -C "$clonePath" submodule--helper list 2>/dev/null | awk '{print $NF}' | while read -r submodulePath; do
-        submoduleGitDirectory=$(git -C "$clonePath/$submodulePath" rev-parse --absolute-git-dir 2>/dev/null) || continue
-        [ "${submoduleGitDirectory#"$clonePath"/}" = "$submoduleGitDirectory" ] \
-          && echo "  submodule    $submodulePath -> $submoduleGitDirectory"
-      done
+      git -C "$clonePath" submodule foreach --recursive --quiet \
+        'git rev-parse --absolute-git-dir' 2>/dev/null \
+        | while read -r submoduleGitDirectory; do
+            if [ "${submoduleGitDirectory#"$clonePath"/}" = "$submoduleGitDirectory" ]; then
+              echo "  submodule    history outside this clone: $submoduleGitDirectory"
+            fi
+          done
     } 2>/dev/null
   )
   [ -n "$remainingReferences" ] || return 0
@@ -172,7 +191,7 @@ reportCanonicalReferences() {
 nestedWorktreesOf() {
   checkoutPath="$1"
   git -C "$checkoutPath" worktree list --porcelain \
-    | awk '/^worktree /{print $2}' \
+    | sed -n 's/^worktree //p' \
     | while read -r worktreePath; do
         relativePath="${worktreePath#"$checkoutPath"/}"
         if [ "$relativePath" != "$worktreePath" ]; then
@@ -234,7 +253,13 @@ createClone() {
   repointCanonicalReferences "$clonePath" "$canonicalPath"
 
   excludeCloneMarker "$clonePath"
-  git -C "$clonePath" fetch --quiet origin
+  if git -C "$clonePath" remote get-url origin >/dev/null 2>&1; then
+    git -C "$clonePath" fetch --quiet origin
+  elif [ -z "$requestedBase" ]; then
+    fail "this checkout has no origin, so there is no default base to start from.
+      name the revision you want, such as the canonical as it stands:
+        gitto new $cloneName HEAD"
+  fi
   git -C "$clonePath" checkout --quiet -B "$cloneName" "$baseRevision" \
     || fail "the canonical holds changes that collide with $baseRevision.
       commit or drop them there, or make the clone at the canonical's own
@@ -280,9 +305,9 @@ listClones() {
 worktreesHostedOutside() {
   hostPath="$1"
   {
-    git -C "$hostPath" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2}'
+    git -C "$hostPath" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p'
     git -C "$hostPath" submodule foreach --recursive --quiet \
-      'git worktree list --porcelain' 2>/dev/null | awk '/^worktree /{print $2}'
+      'git worktree list --porcelain' 2>/dev/null | sed -n 's/^worktree //p'
   } | while read -r hostedPath; do
       if [ "${hostedPath#"$hostPath"}" = "$hostedPath" ]; then
         echo "$hostedPath"
@@ -319,8 +344,12 @@ diagnoseClone() {
   [ -n "$inspectedPaths" ] || { echo "no clones"; return; }
   echo "$inspectedPaths" | while read -r clonePath; do
     echo "$(basename "$clonePath")"
-    findings=$(reportCanonicalReferences "$clonePath" "$canonicalPath")
-    [ -n "$findings" ] && echo "$findings" || echo "  nothing points at the canonical"
+    findings=$(reportCanonicalReferences "$clonePath" "$canonicalPath" || true)
+    if [ -n "$findings" ]; then
+      echo "$findings"
+    else
+      echo "  nothing points at the canonical"
+    fi
   done
 }
 
