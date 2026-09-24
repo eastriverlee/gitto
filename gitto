@@ -5,31 +5,31 @@ printUsage() {
   cat >&2 <<'USAGE'
 usage: gitto <command> [arguments]
 
-  gitto new <name> [<base>]   clone the canonical checkout into a new replica
-  gitto list                  show every replica beside the canonical
-  gitto remove <name>         remove a replica holding nothing unpushed
-  gitto doctor [<name>]       report references still pointing at the canonical
+  gitto new <name> [<base>]   make a clone of the canonical checkout
+  gitto list                  show every clone beside the canonical
+  gitto remove <name>         remove a clone holding nothing unpushed
+  gitto doctor [<name>]       report references pointing outside a clone
 
-A replica is a copy-on-write clone of the whole checkout: history, submodules,
-dependencies, build output and local files, sharing their blocks until written.
-Run from the canonical checkout or from any replica made out of it.
+A clone carries the whole checkout — history, submodules, dependencies, build
+output and local files — and shares its blocks with the canonical until either
+side writes. Run from the canonical checkout, or from any clone of it.
 USAGE
   exit 2
 }
 
-replicaUnderConstruction=""
+cloneUnderConstruction=""
 
-removePartialReplica() {
-  [ -n "$replicaUnderConstruction" ] || return 0
-  partialPath="$replicaUnderConstruction"
-  replicaUnderConstruction=""
+removePartialClone() {
+  [ -n "$cloneUnderConstruction" ] || return 0
+  partialPath="$cloneUnderConstruction"
+  cloneUnderConstruction=""
   rm -rf "$partialPath"
-  echo "gitto: removed the partial replica $(basename "$partialPath")" >&2
+  echo "gitto: removed the partial clone $(basename "$partialPath")" >&2
 }
 
 fail() {
   echo "gitto: $1" >&2
-  removePartialReplica
+  removePartialClone
   exit 1
 }
 
@@ -45,7 +45,7 @@ resolveCanonical() {
   repositoryRoot=$(repositoryRootOf "$PWD") || fail "not inside a git repository"
   if [ -f "$repositoryRoot/.gitto" ]; then
     recordedCanonical=$(cat "$repositoryRoot/.gitto")
-    [ -d "$recordedCanonical" ] || fail "this replica records a canonical that is gone: $recordedCanonical"
+    [ -d "$recordedCanonical" ] || fail "this clone records a canonical that is gone: $recordedCanonical"
     echo "$recordedCanonical"
     return
   fi
@@ -56,7 +56,7 @@ requireIndependentCheckout() {
   checkoutPath="$1"
   [ -d "$checkoutPath/.git" ] && return 0
   fail "the canonical is a git worktree, whose history lives elsewhere: $checkoutPath
-      a replica is made from a real clone. run 'git clone' once and use that as the canonical."
+      a clone is made from a real clone. run 'git clone' once and use that as the canonical."
 }
 
 probeSizeInMegabytes=32
@@ -94,12 +94,12 @@ resolveCloneCommand() {
     fi
   done
   rm -f "$probeSource" "$probeTarget"
-  fail "copying here costs the full size, so a replica would too.
+  fail "copying here costs the full size, so a clone would too.
       macOS needs APFS; Linux needs btrfs, XFS with reflink=1, or OpenZFS 2.2+.
       ext4 and tmpfs cannot share blocks at all."
 }
 
-cloneTree() {
+copyTreeCheaply() {
   cloneKind="$1"
   sourcePath="$2"
   destinationPath="$3"
@@ -116,49 +116,49 @@ $unexplainedErrors"
 }
 
 detachInheritedWorktrees() {
-  replicaPath="$1"
-  inheritedCount=$(git -C "$replicaPath" worktree list | wc -l | tr -d ' ')
+  clonePath="$1"
+  inheritedCount=$(git -C "$clonePath" worktree list | wc -l | tr -d ' ')
   [ "$inheritedCount" -gt 1 ] || return 0
-  rm -rf "$replicaPath/.git/worktrees"
-  git -C "$replicaPath" worktree prune
+  rm -rf "$clonePath/.git/worktrees"
+  git -C "$clonePath" worktree prune
   echo "  detached $((inheritedCount - 1)) inherited worktree registrations"
 }
 
 repointCanonicalReferences() {
-  replicaPath="$1"
+  clonePath="$1"
   canonicalPath="$2"
-  configuredHooksPath=$(git -C "$replicaPath" config --local --get core.hooksPath || true)
+  configuredHooksPath=$(git -C "$clonePath" config --local --get core.hooksPath || true)
   case "$configuredHooksPath" in
     "$canonicalPath"/*)
-      relocatedHooksPath="$replicaPath${configuredHooksPath#"$canonicalPath"}"
-      git -C "$replicaPath" config --local core.hooksPath "$relocatedHooksPath"
-      echo "  repointed core.hooksPath at this replica's own hooks"
+      relocatedHooksPath="$clonePath${configuredHooksPath#"$canonicalPath"}"
+      git -C "$clonePath" config --local core.hooksPath "$relocatedHooksPath"
+      echo "  repointed core.hooksPath at this clone's own hooks"
       ;;
   esac
 }
 
 reportCanonicalReferences() {
-  replicaPath="$1"
+  clonePath="$1"
   canonicalPath="$2"
   canonicalPrefix="$canonicalPath/"
   remainingReferences=$(
     {
-      git -C "$replicaPath" config --local --list | grep -F "$canonicalPrefix" | sed 's/^/  git config   /' || true
-      find "$replicaPath" -maxdepth 4 -type l -not -path '*/.git/*' -not -path '*/node_modules/*' \
+      git -C "$clonePath" config --local --list | grep -F "$canonicalPrefix" | sed 's/^/  git config   /' || true
+      find "$clonePath" -maxdepth 4 -type l -not -path '*/.git/*' -not -path '*/node_modules/*' \
         -exec sh -c 'for link; do case $(readlink "$link") in "'"$canonicalPrefix"'"*) echo "  symlink      ${link} -> $(readlink "$link")";; esac; done' _ {} + 2>/dev/null || true
-      for activationScript in "$replicaPath"/*/bin/activate "$replicaPath"/.venv/bin/activate "$replicaPath"/venv/bin/activate; do
+      for activationScript in "$clonePath"/*/bin/activate "$clonePath"/.venv/bin/activate "$clonePath"/venv/bin/activate; do
         [ -f "$activationScript" ] || continue
         grep -qF "$canonicalPrefix" "$activationScript" && echo "  virtualenv   $activationScript"
       done
-      git -C "$replicaPath" submodule--helper list 2>/dev/null | awk '{print $NF}' | while read -r submodulePath; do
-        submoduleGitDirectory=$(git -C "$replicaPath/$submodulePath" rev-parse --absolute-git-dir 2>/dev/null) || continue
-        [ "${submoduleGitDirectory#"$replicaPath"/}" = "$submoduleGitDirectory" ] \
+      git -C "$clonePath" submodule--helper list 2>/dev/null | awk '{print $NF}' | while read -r submodulePath; do
+        submoduleGitDirectory=$(git -C "$clonePath/$submodulePath" rev-parse --absolute-git-dir 2>/dev/null) || continue
+        [ "${submoduleGitDirectory#"$clonePath"/}" = "$submoduleGitDirectory" ] \
           && echo "  submodule    $submodulePath -> $submoduleGitDirectory"
       done
     } 2>/dev/null
   )
   [ -n "$remainingReferences" ] || return 0
-  echo "  still pointing outside this replica:"
+  echo "  still pointing outside this clone:"
   echo "$remainingReferences"
 }
 
@@ -175,79 +175,79 @@ nestedWorktreesOf() {
 }
 
 dropNestedWorktrees() {
-  replicaPath="$1"
+  clonePath="$1"
   nestedWorktrees="$2"
   [ -n "$nestedWorktrees" ] || return 0
   echo "$nestedWorktrees" | while read -r relativePath; do
     [ -n "$relativePath" ] || continue
-    rm -rf "$replicaPath/$relativePath"
+    rm -rf "$clonePath/$relativePath"
   done
   echo "  dropped $(echo "$nestedWorktrees" | wc -l | tr -d ' ') worktrees the canonical keeps inside itself"
 }
 
-excludeReplicaMarker() {
-  replicaPath="$1"
-  grep -qxF '/.gitto' "$replicaPath/.git/info/exclude" 2>/dev/null && return 0
-  echo '/.gitto' >> "$replicaPath/.git/info/exclude"
+excludeCloneMarker() {
+  clonePath="$1"
+  grep -qxF '/.gitto' "$clonePath/.git/info/exclude" 2>/dev/null && return 0
+  echo '/.gitto' >> "$clonePath/.git/info/exclude"
 }
 
 reportCarriedChanges() {
-  replicaPath="$1"
+  clonePath="$1"
   canonicalPath="$2"
   baseRevision="$3"
-  carriedCommits=$(git -C "$replicaPath" log --oneline "$baseRevision..HEAD" 2>/dev/null | wc -l | tr -d ' ')
-  carriedChanges=$(git -C "$replicaPath" status --porcelain | wc -l | tr -d ' ')
+  carriedCommits=$(git -C "$clonePath" log --oneline "$baseRevision..HEAD" 2>/dev/null | wc -l | tr -d ' ')
+  carriedChanges=$(git -C "$clonePath" status --porcelain | wc -l | tr -d ' ')
   [ "$carriedCommits" = 0 ] && [ "$carriedChanges" = 0 ] && return 0
   echo "  carried from the canonical: $carriedCommits commits, $carriedChanges uncommitted files"
-  echo "  they are this replica's copies; the canonical keeps its own"
+  echo "  they are this clone's copies; the canonical keeps its own"
 }
 
-createReplica() {
+createClone() {
   [ $# -ge 1 ] || printUsage
-  replicaName="$1"
+  cloneName="$1"
   requestedBase="${2:-}"
 
   canonicalPath=$(resolveCanonical)
   requireIndependentCheckout "$canonicalPath"
-  replicaPath="$canonicalPath-$replicaName"
-  [ -e "$replicaPath" ] && fail "already exists: $replicaPath"
+  clonePath="$canonicalPath-$cloneName"
+  [ -e "$clonePath" ] && fail "already exists: $clonePath"
 
   cloneKind=$(resolveCloneCommand "$(dirname "$canonicalPath")")
   nestedWorktrees=$(nestedWorktreesOf "$canonicalPath")
   baseRevision=${requestedBase:-$(git -C "$canonicalPath" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)}
 
-  echo "cloning $(basename "$canonicalPath") -> $(basename "$replicaPath") by $cloneKind"
-  trap 'removePartialReplica' EXIT INT TERM
-  replicaUnderConstruction="$replicaPath"
-  cloneTree "$cloneKind" "$canonicalPath" "$replicaPath"
-  echo "$canonicalPath" > "$replicaPath/.gitto"
+  echo "cloning $(basename "$canonicalPath") -> $(basename "$clonePath") by $cloneKind"
+  trap 'removePartialClone' EXIT INT TERM
+  cloneUnderConstruction="$clonePath"
+  copyTreeCheaply "$cloneKind" "$canonicalPath" "$clonePath"
+  echo "$canonicalPath" > "$clonePath/.gitto"
 
-  detachInheritedWorktrees "$replicaPath"
-  dropNestedWorktrees "$replicaPath" "$nestedWorktrees"
-  repointCanonicalReferences "$replicaPath" "$canonicalPath"
+  detachInheritedWorktrees "$clonePath"
+  dropNestedWorktrees "$clonePath" "$nestedWorktrees"
+  repointCanonicalReferences "$clonePath" "$canonicalPath"
 
-  excludeReplicaMarker "$replicaPath"
-  git -C "$replicaPath" fetch --quiet origin
-  git -C "$replicaPath" checkout --quiet -B "$replicaName" "$baseRevision" \
+  excludeCloneMarker "$clonePath"
+  git -C "$clonePath" fetch --quiet origin
+  git -C "$clonePath" checkout --quiet -B "$cloneName" "$baseRevision" \
     || fail "the canonical holds changes that collide with $baseRevision.
-      commit or drop them there, or make the replica at the canonical's own
+      commit or drop them there, or make the clone at the canonical's own
       revision, which carries everything as it stands:
-        gitto new $replicaName HEAD"
+        gitto new $cloneName HEAD"
   if [ "$requestedBase" = HEAD ]; then
     echo "  submodules left as the canonical had them"
   else
-    git -C "$replicaPath" submodule update --quiet --init --recursive
+    git -C "$clonePath" submodule update --quiet --init --recursive
   fi
 
-  replicaUnderConstruction=""
+  cloneUnderConstruction=""
   trap - EXIT INT TERM
-  reportCarriedChanges "$replicaPath" "$canonicalPath" "$baseRevision"
-  reportCanonicalReferences "$replicaPath" "$canonicalPath"
-  echo "  branch $replicaName on $baseRevision, $(git -C "$replicaPath" submodule status --recursive | wc -l | tr -d ' ') submodules"
-  echo "$replicaPath"
+  reportCarriedChanges "$clonePath" "$canonicalPath" "$baseRevision"
+  reportCanonicalReferences "$clonePath" "$canonicalPath"
+  echo "  branch $cloneName on $baseRevision, $(git -C "$clonePath" submodule status --recursive | wc -l | tr -d ' ') submodules"
+  echo "$clonePath"
 }
 
-eachReplica() {
+eachClone() {
   canonicalPath="$1"
   for candidatePath in "$canonicalPath"-*; do
     [ -f "$candidatePath/.gitto" ] || continue
@@ -256,46 +256,46 @@ eachReplica() {
   done
 }
 
-describeReplica() {
-  replicaPath="$1"
-  currentBranch=$(git -C "$replicaPath" symbolic-ref --short -q HEAD || echo DETACHED)
-  dirtyCount=$(git -C "$replicaPath" status --porcelain | wc -l | tr -d ' ')
-  unpushedCount=$(git -C "$replicaPath" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' ')
-  printf "%-28s %-34s dirty=%-5s unpushed=%s\n" "$(basename "$replicaPath")" "$currentBranch" "$dirtyCount" "$unpushedCount"
+describeClone() {
+  clonePath="$1"
+  currentBranch=$(git -C "$clonePath" symbolic-ref --short -q HEAD || echo DETACHED)
+  dirtyCount=$(git -C "$clonePath" status --porcelain | wc -l | tr -d ' ')
+  unpushedCount=$(git -C "$clonePath" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' ')
+  printf "%-28s %-34s dirty=%-5s unpushed=%s\n" "$(basename "$clonePath")" "$currentBranch" "$dirtyCount" "$unpushedCount"
 }
 
-listReplicas() {
+listClones() {
   canonicalPath=$(resolveCanonical)
   echo "canonical $(basename "$canonicalPath")  $(git -C "$canonicalPath" symbolic-ref --short -q HEAD || echo DETACHED)"
-  eachReplica "$canonicalPath" | while read -r replicaPath; do describeReplica "$replicaPath"; done
+  eachClone "$canonicalPath" | while read -r clonePath; do describeClone "$clonePath"; done
 }
 
-removeReplica() {
+removeClone() {
   [ $# -ge 1 ] || printUsage
   canonicalPath=$(resolveCanonical)
-  replicaPath="$canonicalPath-$1"
-  [ -f "$replicaPath/.gitto" ] || fail "not a gitto: $replicaPath"
+  clonePath="$canonicalPath-$1"
+  [ -f "$clonePath/.gitto" ] || fail "not a gitto: $clonePath"
 
-  dirtyCount=$(git -C "$replicaPath" status --porcelain | wc -l | tr -d ' ')
+  dirtyCount=$(git -C "$clonePath" status --porcelain | wc -l | tr -d ' ')
   [ "$dirtyCount" -eq 0 ] || fail "$1 holds $dirtyCount uncommitted changes"
-  unpushedCount=$(git -C "$replicaPath" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' ')
+  unpushedCount=$(git -C "$clonePath" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' ')
   [ "$unpushedCount" -eq 0 ] || fail "$1 holds $unpushedCount commits no remote has"
 
-  rm -rf "$replicaPath"
-  echo "removed $(basename "$replicaPath")"
+  rm -rf "$clonePath"
+  echo "removed $(basename "$clonePath")"
 }
 
-diagnoseReplica() {
+diagnoseClone() {
   canonicalPath=$(resolveCanonical)
   if [ $# -ge 1 ]; then
     inspectedPaths="$canonicalPath-$1"
   else
-    inspectedPaths=$(eachReplica "$canonicalPath")
+    inspectedPaths=$(eachClone "$canonicalPath")
   fi
-  [ -n "$inspectedPaths" ] || { echo "no replicas"; return; }
-  echo "$inspectedPaths" | while read -r replicaPath; do
-    echo "$(basename "$replicaPath")"
-    findings=$(reportCanonicalReferences "$replicaPath" "$canonicalPath")
+  [ -n "$inspectedPaths" ] || { echo "no clones"; return; }
+  echo "$inspectedPaths" | while read -r clonePath; do
+    echo "$(basename "$clonePath")"
+    findings=$(reportCanonicalReferences "$clonePath" "$canonicalPath")
     [ -n "$findings" ] && echo "$findings" || echo "  nothing points at the canonical"
   done
 }
@@ -304,9 +304,9 @@ diagnoseReplica() {
 command="$1"
 shift
 case "$command" in
-  new) createReplica "$@" ;;
-  list) listReplicas ;;
-  remove) removeReplica "$@" ;;
-  doctor) diagnoseReplica "$@" ;;
+  new) createClone "$@" ;;
+  list) listClones ;;
+  remove) removeClone "$@" ;;
+  doctor) diagnoseClone "$@" ;;
   *) printUsage ;;
 esac

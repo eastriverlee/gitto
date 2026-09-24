@@ -7,12 +7,14 @@ $ gitto new auth-fix
 cloning internkim -> internkim-auth-fix by clonefile
   detached 26 inherited worktree registrations
   dropped 8 worktrees the canonical keeps inside itself
-  repointed core.hooksPath at this replica's own hooks
+  repointed core.hooksPath at this clone's own hooks
   branch auth-fix on origin/main, 2 submodules
 ```
 
-An 18 GB checkout in 122 seconds, for 129 MB of actual disk. Submodules at
-every depth, `node_modules`, build output and local files all come along.
+An 18 GB checkout in 122 seconds, for 129 MB of actual disk — much of it spent
+copying the eight worktrees before dropping them. From a canonical holding
+none, the same checkout clones in 21 seconds for 60 MB. Submodules at every
+depth, `node_modules`, build output and local files all come along.
 
 ## What it is for
 
@@ -29,27 +31,27 @@ the files and you get a directory that still thinks it lives somewhere else.
 
 | what remembers its address | what `gitto` does |
 | --- | --- |
-| `core.hooksPath` | repoints it at the replica's own hooks |
+| `core.hooksPath` | repoints it at the clone's own hooks |
 | inherited worktree registrations | detaches them |
 | worktrees nested inside the canonical | drops them — their history stayed behind |
-| submodule git directories | verifies none escapes the replica |
+| submodule git directories | verifies none escapes the clone |
 | symlinks, virtualenvs, other git config | reports them; `doctor` runs the same scan later |
 
 ## Commands
 
 ```
-gitto new <name> [<base>]   clone the canonical checkout into a new replica
-gitto list                  show every replica beside the canonical
-gitto remove <name>         remove a replica holding nothing unpushed
-gitto doctor [<name>]       report references still pointing outside the replica
+gitto new <name> [<base>]   make a clone of the canonical checkout
+gitto list                  show every clone beside the canonical
+gitto remove <name>         remove a clone holding nothing unpushed
+gitto doctor [<name>]       report references pointing outside a clone
 ```
 
 `<base>` defaults to `origin/HEAD`, and submodules move to the pointers it
 records. Pass `HEAD` to branch where the canonical stands, carrying its
 uncommitted work and leaving its submodules exactly as they are.
 
-Run from the canonical checkout, or from any replica made out of it — each
-replica records where it came from in a `.gitto` file.
+Run from the canonical checkout, or from any clone made out of it — each
+clone records where it came from in a `.gitto` file.
 
 A canonical that is itself a worktree is refused: its history lives elsewhere,
 so a copy of it is not independent.
@@ -64,7 +66,7 @@ A filesystem that shares blocks between a file and its copy.
 | Linux | btrfs · XFS created with `reflink=1` · OpenZFS 2.2+ · bcachefs |
 | Neither | **ext4** and tmpfs, which cannot share blocks at all |
 
-ext4 is the installer default on Ubuntu and Debian, so a replica there would
+ext4 is the installer default on Ubuntu and Debian, so a clone there would
 cost a full copy and `gitto` refuses to make one. Fedora and openSUSE default
 to btrfs, and the RHEL family to XFS, where `mkfs.xfs` has enabled reflink by
 default since xfsprogs 5.1.
