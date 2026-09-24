@@ -1,0 +1,19 @@
+{
+  "name": "eastriverlee",
+  "interface": {
+    "displayName": "eastriverlee"
+  },
+  "plugins": [
+    {
+      "name": "gitto",
+      "source": {
+        "source": "local",
+        "path": "./plugins/gitto"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Coding"
+    }
+  ]
+}

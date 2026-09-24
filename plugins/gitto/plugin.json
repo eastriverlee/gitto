@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "gitto",
+  "version": "0.1.0",
+  "description": "Clone a working directory, not a repository: copy-on-write clones that carry submodules, dependencies and build output, with every reference to the original repointed.",
+  "author": {
+    "name": "eastriverlee",
+    "url": "https://github.com/eastriverlee"
+  },
+  "homepage": "https://gitto.dev",
+  "repository": "https://github.com/eastriverlee/gitto",
+  "license": "MIT",
+  "keywords": ["git", "worktree", "clone", "copy-on-write", "reflink", "apfs", "submodules", "coding-agent"]
+}

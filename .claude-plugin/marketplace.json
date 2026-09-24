@@ -1,0 +1,17 @@
+{
+  "name": "eastriverlee",
+  "owner": {
+    "name": "eastriverlee",
+    "url": "https://github.com/eastriverlee"
+  },
+  "plugins": [
+    {
+      "name": "gitto",
+      "source": "./plugins/gitto",
+      "description": "Clone a working directory, not a repository: copy-on-write clones that carry submodules, dependencies and build output, with every reference to the original repointed.",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ],
+  "description": "gitto, and nothing else."
+}
