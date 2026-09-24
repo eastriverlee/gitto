@@ -8,6 +8,7 @@ import { docsOrigin, docsRoute, siteOrigin } from '@/lib/shared';
 import { highlightSample } from '@/lib/highlight';
 import { agentTabs, installTabs, samples } from '@/lib/landing-samples';
 import { CodeSample, CodeSampleTabs } from '@/components/code-sample';
+import { Wordmark } from '@/components/logo';
 
 const title = 'gitto: a clone of your working directory, not of the repository';
 const description =
@@ -88,7 +89,7 @@ function Hero() {
 	return (
 		<section className="flex flex-col gap-4">
 			<h1 className="text-4xl leading-[1.08] font-semibold tracking-tight text-balance italic sm:text-5xl">
-				<code className="text-fd-primary bg-transparent p-0">git worktree</code> copies tracked files;
+				<code className="text-fd-primary bg-transparent! p-0!">git worktree</code> copies tracked files;
 				<span className="block">not the hours you spent building.</span>
 			</h1>
 			<Prose>
@@ -176,10 +177,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 	return (
 		<HomeLayout {...layout} nav={{ ...layout.nav, url: '/' }} links={[{ text: 'Docs', url: docsURL, external: false }]}>
 			<main className="landing mx-auto flex w-full max-w-2xl flex-col gap-16 px-5 py-10">
-				<div className="flex flex-col items-center gap-3 pt-6">
-					<p aria-label="gitto" className="text-6xl font-semibold tracking-tight sm:text-7xl">
-						gi<span className="text-fd-primary">tt</span>o
-					</p>
+				<div className="flex flex-col items-center gap-4 pt-6">
+					<Wordmark className="h-16 w-auto sm:h-20" />
 					<p className="text-fd-muted-foreground text-center text-balance">
 						A clone of your working directory, not of the repository.
 					</p>

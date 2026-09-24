@@ -95,7 +95,8 @@ cpSync(join(skill, 'scripts', 'install.sh'), join(assets, 'install'));
 cpSync(join(skill, 'scripts', 'gitto'), join(assets, 'gitto'));
 cpSync(join(skill, 'SKILL.md'), join(assets, 'skill'));
 cpSync(join(repository, 'gitto.svg'), join(assets, 'gitto.svg'));
-cpSync(join(repository, 'gitto.svg'), join(assets, 'favicon.svg'));
+cpSync(join(repository, 'gitto-mark.svg'), join(assets, 'gitto-mark.svg'));
+cpSync(join(repository, 'favicon.svg'), join(assets, 'favicon.svg'));
 
 writeFileSync(join(assets, '_redirects'), '/* /__spa-fallback.html 200\n');
 writeFileSync(

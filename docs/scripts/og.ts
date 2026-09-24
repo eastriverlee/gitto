@@ -15,7 +15,7 @@ const line = (parts: { text: string; color?: string; italic?: boolean }[]) => ({
 		text: part.text,
 		style: {
 			fontFamily: 'Cascadia Code',
-			fontSize: 72,
+			fontSize: 48,
 			fontWeight: part.color ? 700 : 600,
 			fontStyle: part.italic === false ? 'normal' : 'italic',
 			color: part.color ?? ink,
@@ -33,18 +33,18 @@ const card = {
 		flexDirection: 'column',
 		alignItems: 'center',
 		justifyContent: 'center',
-		gap: 30,
+		gap: 44,
 		backgroundColor: '#ffffff'
 	},
 	children: [
 		{
 			type: 'container',
-			style: { width: 520, height: 260, overflow: 'hidden', display: 'flex', alignItems: 'center' },
+			style: { display: 'flex', alignItems: 'center' },
 			children: [
 				{
 					type: 'image',
-					src: readFileSync(join(repository, 'gitto.svg')),
-					style: { width: 520, height: 520 }
+					src: Buffer.from(readFileSync(join(repository, 'gitto.svg'), 'utf8').replaceAll('currentColor', ink)),
+					style: { width: 560, height: 158 }
 				}
 			]
 		},
