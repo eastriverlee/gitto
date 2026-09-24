@@ -10,7 +10,7 @@ import { agentTabs, installTabs, samples } from '@/lib/landing-samples';
 import { CodeSample, CodeSampleTabs } from '@/components/code-sample';
 import { Wordmark } from '@/components/logo';
 
-const title = 'gitto: a clone of your working directory, not of the repository';
+const title = 'gitto: copy a whole working directory in seconds';
 const description =
 	'git worktree copies tracked files. gitto copies the whole checkout, dependencies and build output included, in seconds and for no disk.';
 const siteURL = siteOrigin + '/';
@@ -89,8 +89,10 @@ function Hero() {
 	return (
 		<section className="flex flex-col gap-4">
 			<h1 className="text-4xl leading-[1.08] font-semibold tracking-tight text-balance italic sm:text-5xl">
-				<code className="text-fd-primary bg-transparent! p-0!">git worktree</code> copies tracked files;
-				<span className="block">not the hours you spent building.</span>
+				A worktree copies what <code className="bg-transparent! p-0!">git</code> tracks;
+					<span className="block">
+						<code className="text-fd-primary bg-transparent! p-0!">gitto</code> copies what you were working in.
+					</span>
 			</h1>
 			<Prose>
 				Three agents on three branches means three checkouts. A worktree hands each one the tracked files and
@@ -180,7 +182,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 				<div className="flex flex-col items-center gap-4 pt-6">
 					<Wordmark className="h-16 w-auto sm:h-20" />
 					<p className="text-fd-muted-foreground text-center text-balance">
-						A clone of your working directory, not of the repository.
+						Copy a whole working directory in seconds, for almost no disk.
 					</p>
 				</div>
 

@@ -1,9 +1,9 @@
 # gitto
 
-A clone of your working directory, not of the repository.
+Copy a whole working directory, dependencies and build output included.
 
-`git clone` copies history. `git worktree` copies tracked files. Neither copies
-the dependencies you installed or the artifacts you built, so every parallel
+`git clone` copies history. `git worktree` copies tracked files. Both leave
+behind the dependencies you installed and the artifacts you built, so every
 lane pays for them again. gitto copies the whole checkout through the
 filesystem's own copy-on-write, which takes seconds and costs no disk until one
 side writes.
@@ -24,12 +24,12 @@ the right move and how to read what `doctor` reports.
 
 ```bash
 claude plugin marketplace add eastriverlee/gitto
-claude plugin install gitto@gitto
+claude plugin install gitto@13e7
 ```
 
 ```bash
 codex plugin marketplace add eastriverlee/gitto
-codex plugin add gitto@gitto
+codex plugin add gitto@13e7
 ```
 
 ## Commands
@@ -51,7 +51,7 @@ gives you the canonical exactly as it stands, uncommitted work included.
 unpushed count. `doctor` reports references that still point outside a clone.
 `remove` deletes one, and refuses while anything would be lost.
 
-## Why a clone and not a worktree
+## What a worktree leaves behind
 
 A worktree shares one repository, which is why it is cheap and why it is
 limited. It carries tracked files only, so dependencies, build output and

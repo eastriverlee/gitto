@@ -9,11 +9,11 @@ export const installTabs = [
 export const agentTabs = [
 	{
 		label: 'Claude Code',
-		code: 'claude plugin marketplace add eastriverlee/gitto\nclaude plugin install gitto@gitto',
+		code: 'claude plugin marketplace add eastriverlee/gitto\nclaude plugin install gitto@13e7',
 	},
 	{
 		label: 'Codex',
-		code: 'codex plugin marketplace add eastriverlee/gitto\ncodex plugin add gitto@gitto',
+		code: 'codex plugin marketplace add eastriverlee/gitto\ncodex plugin add gitto@13e7',
 	},
 	{
 		label: 'Other agents',

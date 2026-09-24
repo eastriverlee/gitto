@@ -1,6 +1,6 @@
 # gitto
 
-Clone a working directory, not a repository.
+Copy a whole working directory, dependencies and build output included.
 
 ```
 $ gitto new auth-fix
@@ -46,14 +46,14 @@ was lost.
 
 ```sh
 claude plugin marketplace add eastriverlee/gitto
-claude plugin install gitto@gitto
+claude plugin install gitto@13e7
 ```
 
 **Codex**
 
 ```sh
 codex plugin marketplace add eastriverlee/gitto
-codex plugin add gitto@gitto
+codex plugin add gitto@13e7
 ```
 
 Either one then installs the command with `/gitto:install`.

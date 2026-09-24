@@ -1,19 +1,19 @@
 {
-  "name": "gitto",
-  "interface": {
-    "displayName": "gitto"
-  },
-  "plugins": [
-    {
-      "name": "gitto",
-      "source": {
-        "source": "local",
-        "path": "./plugins/gitto"
-      },
-      "policy": {
-        "installation": "AVAILABLE"
-      },
-      "category": "Coding"
-    }
-  ]
+	"name": "13e7",
+	"interface": {
+		"displayName": "gitto"
+	},
+	"plugins": [
+		{
+			"name": "gitto",
+			"source": {
+				"source": "local",
+				"path": "./plugins/gitto"
+			},
+			"policy": {
+				"installation": "AVAILABLE"
+			},
+			"category": "Coding"
+		}
+	]
 }
