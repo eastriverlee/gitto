@@ -268,7 +268,7 @@ describeClone() {
   currentBranch=$(git -C "$clonePath" symbolic-ref --short -q HEAD || echo DETACHED)
   dirtyCount=$(git -C "$clonePath" status --porcelain | wc -l | tr -d ' ')
   unpushedCount=$(git -C "$clonePath" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' ')
-  printf "%-28s %-34s dirty=%-5s unpushed=%s\n" "$(basename "$clonePath")" "$currentBranch" "$dirtyCount" "$unpushedCount"
+  printf "%-24s %-22s dirty=%-5s unpushed=%s\n" "$(basename "$clonePath")" "$currentBranch" "$dirtyCount" "$unpushedCount"
 }
 
 listClones() {

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 120" fill="none" role="img" aria-label="gitto">
+  <g stroke="currentColor" stroke-width="2.5" stroke-linejoin="round">
+    <rect x="16" y="26" width="116" height="72" rx="7"/>
+    <rect x="108" y="26" width="116" height="72" rx="7"/>
+  </g>
+  <path d="M108 33a7 7 0 0 1 7-7h10v72h-10a7 7 0 0 1-7-7z" fill="currentColor" opacity="0.14"/>
+  <g fill="currentColor" opacity="0.5">
+    <rect x="30" y="42" width="52" height="5" rx="2.5"/>
+    <rect x="30" y="56" width="38" height="5" rx="2.5"/>
+    <rect x="30" y="70" width="46" height="5" rx="2.5"/>
+    <rect x="140" y="42" width="52" height="5" rx="2.5"/>
+    <rect x="140" y="56" width="38" height="5" rx="2.5"/>
+    <rect x="140" y="70" width="46" height="5" rx="2.5"/>
+  </g>
+</svg>

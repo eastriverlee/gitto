@@ -1,0 +1,73 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+@font-face {
+  font-family: 'Cascadia Code';
+  src: url('/fonts/CascadiaCode.woff2') format('woff2');
+  font-weight: 200 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Cascadia Code';
+  src: url('/fonts/CascadiaCodeItalic.woff2') format('woff2');
+  font-weight: 200 700;
+  font-style: italic;
+  font-display: swap;
+}
+@theme {
+  --font-sans: 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+:root {
+  --color-fd-primary: oklch(0.53 0.115 225);
+  --color-fd-primary-foreground: #ffffff;
+}
+.dark {
+  --color-fd-primary: oklch(0.76 0.115 225);
+  --color-fd-primary-foreground: #ffffff;
+}
+
+.landing .line.command::before {
+  content: '$ ';
+  color: var(--color-fd-primary);
+}
+
+.landing :not(pre) > code {
+  border-radius: 0.3rem;
+  background-color: var(--color-fd-muted);
+  padding: 0.1rem 0.3rem;
+  font-size: 0.9em;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+.shimmer {
+  background-image: linear-gradient(
+    110deg,
+    var(--color-fd-muted-foreground) 40%,
+    var(--color-fd-foreground) 50%,
+    var(--color-fd-muted-foreground) 60%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2s linear infinite;
+}
