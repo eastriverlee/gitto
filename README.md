@@ -46,14 +46,14 @@ was lost.
 
 ```sh
 claude plugin marketplace add eastriverlee/gitto
-claude plugin install gitto@eastriverlee
+claude plugin install gitto@gitto
 ```
 
 **Codex**
 
 ```sh
 codex plugin marketplace add eastriverlee/gitto
-codex plugin add gitto@eastriverlee
+codex plugin add gitto@gitto
 ```
 
 Either one then installs the command with `/gitto:install`.
