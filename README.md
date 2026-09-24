@@ -99,7 +99,7 @@ A worktree's submodule addresses the host repository absolutely, and does not.
 `doctor` reports what git can see. Nothing in git records that a shell has its
 cwd inside a directory, that `~/.ssh/config` runs a script from one, or that a
 launch agent watches one. A clean report means the references git knows about
-are in order, and never that a directory is safe to delete.
+are in order. It does not mean the directory is safe to delete.
 
 ## Requirements
 
@@ -116,7 +116,7 @@ a full copy and `gitto` refuses to make one. Fedora and openSUSE default to
 btrfs, and the RHEL family to XFS, where `mkfs.xfs` has enabled reflink by
 default since xfsprogs 5.1.
 
-`gitto` decides by measuring rather than by asking the filesystem its name: it
+`gitto` decides by measuring: it
 writes a 32 MB probe, copies it, and reads how much free space the copy
 consumed. macOS `cp -c` falls back to a full byte copy where clonefile is
 unavailable and still exits zero, so a probe that only checks the exit status

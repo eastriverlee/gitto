@@ -24,7 +24,7 @@ disk, `node_modules` and a 2.4 GB prebuilt dependency already in place.
 Reach for it when work wants its own checkout: parallel tasks, a risky refactor,
 a build that must not disturb the one running, a branch kept until it merges.
 
-Reach for it **instead of `git worktree`** on a filesystem that shares blocks.
+Reach for it instead of `git worktree` on a filesystem that shares blocks.
 A worktree's advantage is a shared object store, which is free here anyway, so
 only its costs remain: submodules arrive uninitialised, ignored files are gone,
 and the branch namespace and stash stack stay shared with every other worktree.
@@ -55,7 +55,7 @@ beside it as `<canonical>-<name>`.
 Keep the canonical clean. Untracked files there are inherited by every clone,
 which then reports them as uncommitted forever, and `gitto remove` refuses a
 clone with uncommitted changes. A dirty canonical therefore disables that
-safety check rather than merely looking untidy.
+safety check.
 
 `gitto new` prints what it carried from the canonical. When that line names
 commits or files you did not expect, the canonical is where to fix it.
@@ -79,7 +79,7 @@ refusal names them.
 **A base that collides with the canonical's uncommitted work.** Commit or drop
 it there, or take the clone at `HEAD`, which carries it along.
 
-## Reading doctor honestly
+## What doctor can see
 
 `doctor` reports references that point outside a clone: git configuration,
 symlinks, virtualenv activation scripts, submodule git directories that escaped,
@@ -106,4 +106,4 @@ which branch it held.
    held. Comparing with a stale index instead reports files as deleted that are
    sitting on disk.
 3. Point the branch and HEAD at that ref with `update-ref` and `symbolic-ref`
-   rather than `checkout`, which refuses while the index disagrees.
+   `checkout` refuses while the index disagrees.

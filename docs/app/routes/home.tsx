@@ -193,11 +193,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					</Prose>
 					<FileTrees />
 					<CodeSample sample={code.create} />
-					<Prose>
-						That copy carried 13 GB in 21 seconds and cost 60 MB of disk.
-						Dependencies, build output, submodules at every depth and untracked local files are all present,
-						so there is nothing to run before work starts.
-					</Prose>
+					<Prose>That copy carried 13 GB in 21 seconds and cost 60 MB of disk.</Prose>
 				</Section>
 
 				<Section heading="Install">
@@ -214,9 +210,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
 				<Section heading="Plugin">
 					<Prose>
-						The plugin adds the skill, which is what makes an agent reach for a clone instead of adding one
-						more worktree to a pile nobody is counting. It also carries the reasoning behind each refusal, so
-						a blocked command is read rather than worked around.
+						The plugin adds the skill, which is what makes an agent reach for a clone when the
+						work wants its own checkout. It also carries the reasoning behind each refusal, so
+						a blocked command is read and answered.
 					</Prose>
 					<CodeSampleTabs tabs={loaderData.agentTabs} />
 					<Prose className="text-fd-muted-foreground text-sm">
@@ -261,7 +257,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					<Prose>
 						<code>doctor</code> knows what git knows. A reference from outside git, an editor workspace or a
 						line in <code>~/.ssh/config</code>, is not on that list, so a clean report means nothing points
-						at the canonical, never that a directory is safe to delete.
+						at the canonical. It does not mean the directory is safe to delete.
 					</Prose>
 				</Section>
 
@@ -273,7 +269,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 					<CodeSample sample={code.refuseRemove} />
 					<Prose>
 						The same care applies before anything is copied. gitto measures the filesystem first, so a
-						machine that cannot share blocks is told so rather than quietly paying full price:
+						machine that cannot share blocks is told so before it pays full price:
 					</Prose>
 					<CodeSample sample={code.refuseFilesystem} />
 				</Section>

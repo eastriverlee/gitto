@@ -102,8 +102,8 @@ A filesystem that can share blocks between two files.
 
 gitto measures this before it copies anything: it writes a probe file, clones
 it, and compares free space across the operation. A filesystem that silently
-falls back to a full copy is caught by the measurement rather than trusted by
-its exit status.
+falls back to a full copy is caught by the measurement, because its exit status
+reports success either way.
 
 ## Recovering a checkout that lost its git directory
 
