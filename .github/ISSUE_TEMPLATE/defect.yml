@@ -1,0 +1,72 @@
+name: Defect
+description: gitto did something other than what it says it does
+labels: [defect]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The useful report says what you ran, what it printed, and what the
+        repository looked like. A guess about the cause is welcome after that.
+
+  - type: textarea
+    id: ran
+    attributes:
+      label: What you ran
+      description: The commands, from the directory you were in.
+      placeholder: |
+        cd ~/work/storefront
+        gitto new auth-fix
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: printed
+    attributes:
+      label: What it printed
+      description: All of it, including the lines that look uninteresting.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: The shape of the repository
+      description: |
+        Run this in the checkout and paste the output. It reads nothing but
+        counts and paths.
+      value: |
+        gitto version
+        uname -s
+        git --version
+        df -T . 2>/dev/null || mount | grep " on $(df . | tail -1 | awk '{print $NF}') "
+        git submodule status --recursive | wc -l
+        git worktree list | wc -l
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: gitto
+    attributes:
+      label: What gitto says about it
+      description: Skip any command that refuses; the refusal itself is useful.
+      value: |
+        gitto list
+        gitto doctor
+      render: shell
+
+  - type: checkboxes
+    id: tests
+    attributes:
+      label: Before filing
+      options:
+        - label: I ran `sh tests/run` and said below if anything failed

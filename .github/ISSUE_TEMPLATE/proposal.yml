@@ -1,0 +1,42 @@
+name: Proposal
+description: something gitto should do that it does not
+labels: [proposal]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        gitto has four jobs: copy a working directory, repair what a copy
+        breaks, say what it cannot repair, and refuse when it is not sure.
+        A proposal lands faster when it belongs to one of them.
+
+  - type: textarea
+    id: situation
+    attributes:
+      label: The situation you were in
+      description: What you were doing when gitto was not enough.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today instead
+      description: The commands you run by hand, or the tool you reach for.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: What it would look like
+      description: A command line and the output you would want back.
+      render: shell
+
+  - type: textarea
+    id: cost
+    attributes:
+      label: What it would cost
+      description: |
+        Anything it would have to read or write, any command it would run on
+        your behalf, and anything it could get wrong.

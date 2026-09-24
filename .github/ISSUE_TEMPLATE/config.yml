@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://gitto.13e7.co/docs/
+    about: Commands, what a copy breaks, which filesystems can share blocks
+  - name: Questions
+    url: https://gitto.13e7.co/docs/questions/
+    about: Linux, ext4, undoing a clone, how it differs from git clone
