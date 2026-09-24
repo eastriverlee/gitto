@@ -342,9 +342,31 @@ Prints where a clone lives, for scripts and for `cd`.
 gitto adopt <canonical>
 ```
 
-Points a clone at a canonical that moved. A clone records where it came from, so
-moving or renaming the canonical leaves every clone naming a directory that is
-gone. `adopt` writes the new location.
+Points the current directory at that canonical. It does one of two things,
+depending on what the directory already is.
+
+### A clone whose canonical moved
+
+Every clone records the canonical's path. Move or rename the canonical and that
+path stops resolving, so the clone's commands say the canonical is missing.
+Running `adopt` from inside the clone rewrites the record.
+
+### A git worktree
+
+A worktree borrows its history from the repository that created it, which is why
+it cannot be moved, why its submodules point back into that repository, and why
+the repository cannot be retired while any worktree survives. `adopt` gives the
+directory a repository of its own, copied from the canonical block by block, and
+takes it off the host's register.
+
+Nothing moves. The directory keeps its path, its branch, and every file at every
+submodule depth, tracked, ignored and untracked alike. That matters most for work
+sitting inside a submodule, which `git ls-files --others` at the top level does
+not see and a copy-the-files migration silently drops.
+
+Before the swap it records the commit, the branch and the status at every depth.
+After it, it compares the status against what it recorded and puts the worktree
+back exactly as it was if the two differ.
 
 ## version
 

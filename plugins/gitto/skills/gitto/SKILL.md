@@ -79,6 +79,13 @@ refusal names them.
 **A base that collides with the canonical's uncommitted work.** Commit or drop
 it there, or take the clone at `HEAD`, which carries it along.
 
+## A worktree that already exists
+
+`gitto adopt <canonical>`, run from inside a git worktree, gives that directory a
+repository of its own without moving it. Reach for it before copying files out of
+a worktree: untracked work inside a submodule never appears in `git ls-files
+--others` at the top level, so a copy leaves it behind without saying so.
+
 ## What doctor can see
 
 `doctor` reports references that point outside a clone: git configuration,

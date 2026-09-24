@@ -33,6 +33,18 @@ got: $haystack" ;;
   esac
 }
 
+expectEqual() {
+  description="$1"
+  wanted="$2"
+  got="$3"
+  if [ "$wanted" = "$got" ]; then
+    report pass "$description"
+  else
+    report fail "$description" "wanted: $wanted
+got: $got"
+  fi
+}
+
 expectMissing() {
   description="$1"
   haystack="$2"
@@ -407,6 +419,33 @@ checkRefusalOn() {
 }
 
 printf 'gitto tests\n\n'
+adoptsAWorktreeInPlace() {
+  canonical=$(makeCanonical nest)
+  host=$(dirname "$canonical")/nest-host
+  git clone -q "$(git -C "$canonical" config remote.origin.url)" "$host"
+  leaf=$(dirname "$canonical")/nest-leaf
+  git -C "$host" worktree add -q "$leaf" -b leaf
+  printf 'local\n' >> "$leaf/file.txt"
+  printf 'x\n' > "$leaf/untracked.txt"
+  before=$(git -C "$leaf" status --porcelain)
+
+  runIn "$leaf" adopt "$canonical" >/dev/null 2>&1
+
+  expectPath 'the directory stays where it was' "$leaf"
+  expectPath 'and gets a repository of its own' "$leaf/.git/HEAD"
+  expectEqual 'every change survives exactly' "$before" "$(git -C "$leaf" status --porcelain)"
+  expectEqual 'the branch survives' 'leaf' "$(git -C "$leaf" rev-parse --abbrev-ref HEAD)"
+  expectEqual 'the host stops registering it' '1' "$(git -C "$host" worktree list | wc -l | tr -d ' ')"
+  expectEqual 'it records where it came from' "$canonical" "$(cat "$leaf/.gitto")"
+  expectMissing 'and the record stays out of git status' "$(git -C "$leaf" status --porcelain)" '.gitto'
+}
+
+refusesToAdoptWhatIsAlreadyIndependent() {
+  canonical=$(makeCanonical solo)
+  output=$(runIn "$canonical" adopt "$canonical" 2>&1 || true)
+  expectContains 'says it is neither a clone nor a worktree' "$output" 'worktree'
+}
+
 for testName in \
   carriesUntrackedState \
   resolvesNestedSubmodules \
@@ -430,10 +469,16 @@ for testName in \
   reportsPlantedReferences \
   refusesWhenBlocksCannotBeShared \
   everyManifestAgreesOnTheVersion \
-  keepsItsMarkerOutOfTheWay
+  keepsItsMarkerOutOfTheWay \
+  adoptsAWorktreeInPlace \
+  refusesToAdoptWhatIsAlreadyIndependent
 do
+  reportsBefore=$((passed + failed))
   "$testName" || report fail "$testName" 'the test itself failed'
+  [ $((passed + failed)) -gt "$reportsBefore" ] \
+    || report fail "$testName" 'the test reported nothing, so it never reached an assertion'
 done
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
+

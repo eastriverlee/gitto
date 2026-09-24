@@ -531,14 +531,141 @@ printClonePath() {
   echo "$clonePath"
 }
 
+statusEverywhere() {
+  repositoryPath="$1"
+  git -C "$repositoryPath" status --porcelain 2>/dev/null
+  git -C "$repositoryPath" submodule foreach --recursive --quiet \
+    'git status --porcelain | sed "s|^|$displaypath |"' 2>/dev/null || true
+}
+
+recordSubmoduleHeads() {
+  repositoryPath="$1"
+  git -C "$repositoryPath" submodule foreach --recursive --quiet \
+    'printf "%s\n%s\n%s\n%s\n%s\n" "$displaypath" "$(git rev-parse HEAD)" \
+      "$(git rev-parse --abbrev-ref HEAD)" "$(git rev-parse --absolute-git-dir)" "$(cat .git 2>/dev/null)"' \
+    2>/dev/null || true
+}
+
+restoreHeadWithoutTouchingFiles() {
+  repositoryPath="$1"
+  recordedCommit="$2"
+  recordedBranch="$3"
+  if [ -n "$recordedBranch" ] && [ "$recordedBranch" != HEAD ]; then
+    git -C "$repositoryPath" update-ref "refs/heads/$recordedBranch" "$recordedCommit"
+    git -C "$repositoryPath" symbolic-ref HEAD "refs/heads/$recordedBranch"
+  else
+    git -C "$repositoryPath" update-ref --no-deref HEAD "$recordedCommit"
+  fi
+  git -C "$repositoryPath" read-tree "$recordedCommit"
+  git -C "$repositoryPath" update-index --refresh >/dev/null 2>&1 || true
+}
+
+copyGitDirectory() {
+  sourceGitDirectory="$1"
+  destinationGitDirectory="$2"
+  copyErrors=$(mktemp)
+  case "$(resolveCloneCommand "$(dirname "$destinationGitDirectory")")" in
+    clonefile) /bin/cp -c -R "$sourceGitDirectory" "$destinationGitDirectory" 2>"$copyErrors" || true ;;
+    reflink) cp --reflink=always -a "$sourceGitDirectory" "$destinationGitDirectory" 2>"$copyErrors" || true ;;
+  esac
+  unexplainedErrors=$(grep -v 'is a socket (not copied)' "$copyErrors" || true)
+  rm -f "$copyErrors"
+  [ -z "$unexplainedErrors" ] || fail "copying history reported more than skipped sockets:
+  $unexplainedErrors"
+  [ -f "$destinationGitDirectory/HEAD" ] || fail "copying history produced nothing at $destinationGitDirectory"
+}
+
 adoptCanonical() {
   [ $# -ge 1 ] || printUsage
   newCanonical=$(absolutePathOf "$1") || fail "no such directory: $1"
-  repositoryRoot=$(repositoryRootOf "$PWD") || fail "not inside a git repository"
-  [ -f "$repositoryRoot/.gitto" ] || fail "this is not a clone, so it has no canonical to point at"
   [ -d "$newCanonical/.git" ] || fail "that is not an independent checkout: $newCanonical"
-  echo "$newCanonical" > "$repositoryRoot/.gitto"
-  echo "$(basename "$repositoryRoot") now follows $(basename "$newCanonical")"
+  repositoryRoot=$(repositoryRootOf "$PWD") || fail "not inside a git repository"
+
+  if [ -f "$repositoryRoot/.gitto" ]; then
+    echo "$newCanonical" > "$repositoryRoot/.gitto"
+    echo "$(basename "$repositoryRoot") now follows $(basename "$newCanonical")"
+    return 0
+  fi
+
+  [ -f "$repositoryRoot/.git" ] \
+    || fail "$(basename "$repositoryRoot") is already an independent checkout, so it has no worktree to convert and no canonical to follow"
+  adoptWorktree "$repositoryRoot" "$newCanonical"
+}
+
+adoptWorktree() {
+  targetPath="$1"
+  canonicalPath="$2"
+  [ "$targetPath" != "$canonicalPath" ] || fail "a canonical cannot adopt itself"
+
+  hostGitDirectory=$(git -C "$targetPath" rev-parse --absolute-git-dir)
+  hostCommonDirectory=$(cd "$(git -C "$targetPath" rev-parse --git-common-dir)" && pwd -P)
+  hostPath=$(dirname "$hostCommonDirectory")
+
+  branchName=$(git -C "$targetPath" rev-parse --abbrev-ref HEAD)
+  headCommit=$(git -C "$targetPath" rev-parse HEAD)
+  recordedState=$(statusEverywhere "$targetPath")
+  adoptionRecordFile=$(mktemp)
+  recordSubmoduleHeads "$targetPath" > "$adoptionRecordFile"
+  submoduleCount=$(( $(wc -l < "$adoptionRecordFile") / 5 ))
+  adoptionSavedMarker=$(cat "$targetPath/.git")
+
+  echo "adopting $(basename "$targetPath") from $(basename "$hostPath") into $(basename "$canonicalPath")"
+
+  stagedGitDirectory="$targetPath/.git.gitto-adopting"
+  [ -e "$stagedGitDirectory" ] && fail "something is already at $stagedGitDirectory"
+  copyGitDirectory "$canonicalPath/.git" "$stagedGitDirectory"
+  rm -rf "$stagedGitDirectory/worktrees"
+  git --git-dir="$stagedGitDirectory" config --unset core.worktree 2>/dev/null || true
+  git --git-dir="$stagedGitDirectory" config core.bare false
+
+  rm -f "$targetPath/.git"
+  mv "$stagedGitDirectory" "$targetPath/.git"
+  adoptionUnderway="$targetPath"
+  trap 'abandonAdoption' EXIT INT TERM
+
+  git -C "$targetPath" fetch --quiet "$hostPath" '+refs/heads/*:refs/gitto-adopted/*' 2>/dev/null || true
+  restoreHeadWithoutTouchingFiles "$targetPath" "$headCommit" "$branchName"
+
+  while read -r submodulePath; do
+    read -r submoduleCommit || break
+    read -r submoduleBranch || break
+    read -r submoduleGitDirectory || break
+    read -r originalMarker || break
+    [ -n "$submodulePath" ] || continue
+    [ -d "$targetPath/$submodulePath" ] || continue
+    printf 'gitdir: %s\n' "$targetPath/.git${submoduleGitDirectory#"$hostGitDirectory"}" \
+      > "$targetPath/$submodulePath/.git"
+    git -C "$targetPath/$submodulePath" fetch --quiet "$submoduleGitDirectory" \
+      '+refs/heads/*:refs/gitto-adopted/*' </dev/null 2>/dev/null || true
+    restoreHeadWithoutTouchingFiles "$targetPath/$submodulePath" "$submoduleCommit" "$submoduleBranch" </dev/null
+  done < "$adoptionRecordFile"
+
+  currentState=$(statusEverywhere "$targetPath")
+  [ "$currentState" = "$recordedState" ] || fail "the working tree reads differently than it did before, so nothing was kept:
+  was: $(printf '%s' "$recordedState" | tr '\n' '|')
+  now: $(printf '%s' "$currentState" | tr '\n' '|')"
+
+  adoptionUnderway=""
+  trap - EXIT INT TERM
+
+  rm -rf "$hostGitDirectory"
+  git -C "$hostPath" worktree prune
+  repointCanonicalReferences "$targetPath" "$canonicalPath"
+  echo "$canonicalPath" > "$targetPath/.gitto"
+  excludeCloneMarker "$targetPath"
+  rm -f "$adoptionRecordFile"
+
+  echo "  history now lives in $(basename "$targetPath")/.git, copied from the canonical"
+  echo "  $(basename "$hostPath") no longer registers it as a worktree"
+  echo "  branch $branchName, $submoduleCount submodules, nothing moved"
+}
+
+abandonAdoption() {
+  [ -n "${adoptionUnderway:-}" ] || return 0
+  echo "gitto: restoring $(basename "$adoptionUnderway") as a worktree" >&2
+  rm -rf "$adoptionUnderway/.git"
+  printf '%s\n' "$adoptionSavedMarker" > "$adoptionUnderway/.git"
+  adoptionUnderway=""
 }
 
 printShellInit() {
