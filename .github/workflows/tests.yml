@@ -36,7 +36,13 @@ jobs:
         run: |
           findmnt -no FSTYPE /mnt/cow
           findmnt -no FSTYPE /mnt/plain
-          cp --reflink=always /etc/hostname /mnt/cow/probe && echo "reflink works on /mnt/cow"
+          head -c 1048576 /dev/urandom > /mnt/cow/source
+          cp --reflink=always /mnt/cow/source /mnt/cow/copy && echo "reflink works on /mnt/cow"
+          head -c 1048576 /dev/urandom > /mnt/plain/source
+          cp --reflink=always /mnt/plain/source /mnt/plain/copy \
+            && echo "unexpected: /mnt/plain shares blocks" && exit 1
+          echo "/mnt/plain cannot share blocks, as intended"
+          rm -f /mnt/cow/source /mnt/cow/copy /mnt/plain/source
       - run: TMPDIR=/mnt/cow GITTO_TEST_PLAIN_FILESYSTEM=/mnt/plain ./tests/run
 
   prose:
