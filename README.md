@@ -9,10 +9,10 @@ cloning storefront -> storefront-auth-fix by clonefile
   branch auth-fix on origin/main, 4 submodules
 
 $ cd ../storefront-auth-fix && ls
-node_modules/  .dependency/  web/  ...
+node_modules/  vendor/  build/  src/  ...
 ```
 
-An 18 GB checkout in 21 seconds, for 60 MB of real disk. Submodules at every
+A 13 GB checkout in 21 seconds, for 60 MB of real disk. Submodules at every
 depth, dependencies and build output all present, nothing to install.
 
 ## The problem

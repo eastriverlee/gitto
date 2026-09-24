@@ -16,7 +16,7 @@ nothing until either side writes, and then repoints what the move broke.
     gitto new auth-fix
     cd ../<canonical>-auth-fix
 
-Measured on an 18 GB checkout with four submodules: 21 seconds, 60 MB of real
+Measured on a 13 GB checkout with four submodules: 21 seconds, 60 MB of real
 disk, `node_modules` and a 2.4 GB prebuilt dependency already in place.
 
 ## When to reach for it
