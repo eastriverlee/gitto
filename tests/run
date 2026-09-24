@@ -446,6 +446,15 @@ recordsWhatAdoptionCost() {
   expectContains 'and the clone is in the listing' "$listing" '"name": "taken"'
 }
 
+refusesToUpdateAScriptThatFollowsACheckout() {
+  mkdir -p "$laboratory/bin"
+  ln -sf "$gitto" "$laboratory/bin/gitto"
+  refusal=$("$laboratory/bin/gitto" update 2>&1 || true)
+  expectContains 'a linked script is not replaced' "$refusal" 'symbolic link into a checkout'
+  expectPath 'and the link is still a link' "$laboratory/bin/gitto"
+  expectContains 'and it still points at the checkout' "$(readlink "$laboratory/bin/gitto")" 'scripts/gitto'
+}
+
 adoptsAWorktreeInPlace() {
   canonical=$(makeCanonical nest)
   host=$(dirname "$canonical")/nest-host
@@ -554,6 +563,7 @@ for testName in \
   adoptsAWorktreeInPlace \
   readsSettingsGitCannotSee \
   recordsWhatAdoptionCost \
+  refusesToUpdateAScriptThatFollowsACheckout \
   refusesToAdoptWhatIsAlreadyIndependent \
   leavesIndependentSubmodulesAlone \
   restoresEverySubmoduleMarkerWhenItGivesUp

@@ -84,6 +84,7 @@ gitto doctor [<name>] [--json]                  report what points outside a clo
 gitto path <name>                               print where a clone lives
 gitto adopt <canonical>                         re-point a clone at a moved canonical
 gitto shell-init                                emit the shell function
+gitto update                                    replace this script with what the site serves
 gitto version                                   print the version
 ```
 

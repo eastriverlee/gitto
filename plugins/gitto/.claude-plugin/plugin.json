@@ -1,7 +1,7 @@
 {
   "name": "gitto",
   "description": "Clone a working directory, not a repository: copy-on-write clones that carry submodules, dependencies and build output, with every reference to the original repointed.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "author": {
     "name": "eastriverlee",

@@ -1,7 +1,42 @@
 #!/bin/sh
 set -eu
 
-gittoVersion=0.2.0
+gittoVersion=0.3.0
+
+updateInstalledScript() {
+  runningScript=$0
+  case $runningScript in
+    */*) ;;
+    *) runningScript=$(command -v "$runningScript") ;;
+  esac
+  [ -f "$runningScript" ] || fail "cannot find the script this command is running from"
+
+  if [ -L "$runningScript" ]; then
+    fail "$runningScript is a symbolic link into a checkout, so it already follows
+      whatever that checkout holds. Update it with git there instead."
+  fi
+
+  downloadPath="$runningScript.gitto-downloading"
+  sourceUrl=${GITTO_SOURCE_URL:-https://gitto.13e7.co/gitto}
+  curl -fsSL "$sourceUrl" -o "$downloadPath" 2>/dev/null || {
+    rm -f "$downloadPath"
+    fail "could not read $sourceUrl"
+  }
+  sh -n "$downloadPath" 2>/dev/null || {
+    rm -f "$downloadPath"
+    fail "what $sourceUrl served does not parse, so nothing was replaced"
+  }
+  chmod +x "$downloadPath"
+  fetchedVersion=$(sh "$downloadPath" version 2>/dev/null | sed 's/^gitto //')
+  mv "$downloadPath" "$runningScript"
+
+  if [ "$gittoVersion" = "$fetchedVersion" ]; then
+    echo "gitto $gittoVersion is already what $sourceUrl serves"
+  else
+    echo "gitto $gittoVersion -> $fetchedVersion at $runningScript"
+  fi
+}
+
 
 printUsage() {
   cat >&2 <<'USAGE'
@@ -17,6 +52,7 @@ usage: gitto <command> [arguments]
   gitto path <name>           print where a clone lives
   gitto adopt <canonical>     point this clone at a canonical that moved
   gitto shell-init            emit the shell function and completions
+  gitto update                replace this script with what the site serves
   gitto version               print the version
 
 A clone carries the whole checkout: history, submodules, dependencies, build
@@ -740,7 +776,7 @@ _gittoCloneNames() {
   command gitto list --json 2>/dev/null | sed -n 's/.*"name": "\([^"]*\)".*/\1/p'
 }
 
-_gittoCommands='new list remove prune doctor sync path adopt shell-init version'
+_gittoCommands='new list remove prune doctor sync path adopt shell-init update version'
 
 if [ -n "${ZSH_VERSION:-}" ]; then
   _gitto() {
@@ -781,6 +817,7 @@ case "$command" in
   path) printClonePath "$@" ;;
   adopt) adoptCanonical "$@" ;;
   shell-init) printShellInit ;;
+  update) updateInstalledScript ;;
   version) echo "gitto $gittoVersion" ;;
   *) printUsage ;;
 esac

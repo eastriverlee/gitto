@@ -377,6 +377,30 @@ Before the swap it records the commit, the branch and the status at every depth.
 After it, it compares the status against what it recorded and puts the worktree
 back exactly as it was if the two differ.
 
+## update
+
+```
+gitto update
+```
+
+Replaces the running script with what `https://gitto.13e7.co/gitto` serves, after
+checking that what arrived parses. `GITTO_SOURCE_URL` points it somewhere else.
+
+```
+$ gitto update
+gitto 0.2.0 -> 0.3.0 at /Users/you/.local/bin/gitto
+```
+
+### When it refuses
+
+A script that is a symbolic link into a checkout already follows whatever that
+checkout holds, so replacing it would break the link rather than update anything.
+Pull in the checkout instead.
+
+The plugin carries its own copy, which each client updates on its own:
+`claude plugin update gitto@13e7`, or for Codex,
+`codex plugin marketplace upgrade 13e7` followed by a remove and add.
+
 ## version
 
 ```

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "gitto",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Clone a working directory, not a repository: copy-on-write clones that carry submodules, dependencies and build output, with every reference to the original repointed.",
   "author": {
     "name": "eastriverlee",
