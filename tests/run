@@ -207,16 +207,20 @@ recordsWhatTheCloneCost() {
 }
 
 emitsMachineReadableListing() {
-  canonical=$(makeCanonical json)
-  runIn "$canonical" new lane >/dev/null 2>&1
-  listing=$(runIn "$canonical" list --json 2>&1)
-  if printf '%s' "$listing" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
-    report pass 'list --json parses as JSON'
+  canonical=$(makeCanonical listing)
+  runIn "$canonical" new first >/dev/null 2>&1
+  runIn "$canonical" new second >/dev/null 2>&1
+
+  output=$(runIn "$canonical" list --json)
+  if printf '%s' "$output" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
+    report pass 'two clones still make valid json'
   else
-    report fail 'list --json parses as JSON' "$listing"
+    report fail 'two clones still make valid json' "$output"
   fi
-  name=$(printf '%s' "$listing" | python3 -c 'import json,sys; print(json.load(sys.stdin)["clones"][0]["name"])' 2>/dev/null || echo '')
-  expectContains 'and names the clone as remove takes it' "$name" 'lane'
+  expectContains 'the listing names the canonical' "$output" '"canonical"'
+  expectContains 'and carries the short name remove takes' "$output" '"name": "first"'
+  expectContains 'and the second one too' "$output" '"name": "second"'
+  expectContains 'and what the copy cost' "$output" '"diskKilobytes"'
 }
 
 reportsAStaleCanonical() {

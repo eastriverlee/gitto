@@ -413,7 +413,7 @@ listClones() {
     "$(jsonString "$(branchOf "$canonicalPath")")" "$(behindCountOf "$canonicalPath")"
   separator=""
   eachClone "$canonicalPath" | while read -r clonePath; do
-    printf '%s' "$separator"
+    printf '%b' "$separator"
     describeCloneAsJson "$clonePath" "$canonicalPath"
     separator=",\n"
     printf '\n'
