@@ -355,6 +355,30 @@ everyManifestAgreesOnTheVersion() {
   done
 }
 
+keepsItsMarkerOutOfTheWay() {
+  canonical=$(makeCanonical marker)
+  runIn "$canonical" new lane >/dev/null 2>&1
+  clone="$canonical-lane"
+
+  expectPath 'a clone records where it came from' "$clone/.gitto"
+  recorded=$(cat "$clone/.gitto")
+  expectContains 'and the record names the canonical' "$recorded" "$canonical"
+
+  status=$(git -C "$clone" status --porcelain)
+  if [ -z "$status" ]; then
+    report pass 'the record leaves the clone clean'
+  else
+    report fail 'the record leaves the clone clean' "git status: $status"
+  fi
+
+  tracked=$(git -C "$clone" status --porcelain -- .gitignore)
+  if [ -z "$tracked" ]; then
+    report pass 'and never edits a file the project commits'
+  else
+    report fail 'and never edits a file the project commits' ".gitignore changed: $tracked"
+  fi
+}
+
 refusesWhenBlocksCannotBeShared() {
   if [ -n "${GITTO_TEST_PLAIN_FILESYSTEM:-}" ]; then
     checkRefusalOn "$GITTO_TEST_PLAIN_FILESYSTEM"
@@ -405,7 +429,8 @@ for testName in \
   leavesSubmodulesAloneForHead \
   reportsPlantedReferences \
   refusesWhenBlocksCannotBeShared \
-  everyManifestAgreesOnTheVersion
+  everyManifestAgreesOnTheVersion \
+  keepsItsMarkerOutOfTheWay
 do
   "$testName" || report fail "$testName" 'the test itself failed'
 done
