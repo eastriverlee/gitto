@@ -219,6 +219,17 @@ writeFileSync(
 		.map((url) => `\t<url><loc>${siteOrigin}${url}</loc></url>`)
 		.join('\n')}\n</urlset>\n`,
 );
+const retiredRoutes: Record<string, string> = {
+	'/docs/questions/clone-a-clone': '/docs/questions/from-inside-a-clone',
+	'/docs/commands': '/docs/commands/new',
+};
+writeFileSync(
+	join(assets, '_redirects'),
+	Object.entries(retiredRoutes)
+		.map(([from, to]) => `${from} ${to} 301`)
+		.join('\n') + '\n',
+);
+
 writeFileSync(join(assets, 'robots.txt'), `User-agent: *\nAllow: /\n\nSitemap: ${siteOrigin}/sitemap.xml\n`);
 
 console.log(`wrote ${written.length} pages: ${written.join(', ')}`);

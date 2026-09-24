@@ -1,17 +1,26 @@
 #!/bin/sh
 set -eu
 
+gittoVersion=0.2.0
+
 printUsage() {
   cat >&2 <<'USAGE'
 usage: gitto <command> [arguments]
 
   gitto new <name> [<base>]   make a clone of the canonical checkout
-  gitto list                  show every clone beside the canonical
+      --branch <branch>       name the branch, when it differs from <name>
+  gitto list [--json]         show every clone beside the canonical
   gitto remove <name>         remove a clone holding nothing unpushed
+  gitto prune [--remove]      list clones whose work is merged, or remove them
   gitto doctor [<name>]       report references pointing outside a clone
+  gitto sync                  bring the canonical up to date
+  gitto path <name>           print where a clone lives
+  gitto adopt <canonical>     point this clone at a canonical that moved
+  gitto shell-init            emit the shell function and completions
+  gitto version               print the version
 
-A clone carries the whole checkout — history, submodules, dependencies, build
-output and local files — and shares its blocks with the canonical until either
+A clone carries the whole checkout: history, submodules, dependencies, build
+output and local files. It shares its blocks with the canonical until either
 side writes. Run from the canonical checkout, or from any clone of it.
 USAGE
   exit 2
@@ -31,6 +40,25 @@ fail() {
   echo "gitto: $1" >&2
   removePartialClone
   exit 1
+}
+
+readFlag() {
+  flagName="$1"
+  shift
+  for argument in "$@"; do
+    [ "$argument" = "$flagName" ] && { echo yes; return; }
+  done
+  echo no
+}
+
+withoutFlags() {
+  for argument in "$@"; do
+    case "$argument" in --*) ;; *) printf '%s\n' "$argument" ;; esac
+  done
+}
+
+jsonString() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
 absolutePathOf() {
@@ -229,9 +257,21 @@ reportCarriedChanges() {
 }
 
 createClone() {
+  branchName=""
+  positional=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --branch) branchName="${2:-}"; shift 2 ;;
+      --branch=*) branchName="${1#--branch=}"; shift ;;
+      *) positional="$positional $1"; shift ;;
+    esac
+  done
+  # shellcheck disable=SC2086
+  set -- $positional
   [ $# -ge 1 ] || printUsage
   cloneName="$1"
   requestedBase="${2:-}"
+  [ -n "$branchName" ] || branchName="$cloneName"
 
   canonicalPath=$(resolveCanonical)
   requireIndependentCheckout "$canonicalPath"
@@ -245,7 +285,9 @@ createClone() {
   echo "cloning $(basename "$canonicalPath") -> $(basename "$clonePath") by $cloneKind"
   trap 'removePartialClone' EXIT INT TERM
   cloneUnderConstruction="$clonePath"
+  freeKilobytesBeforeClone=$(freeKilobytesIn "$(dirname "$canonicalPath")")
   copyTreeCheaply "$cloneKind" "$canonicalPath" "$clonePath"
+  freeKilobytesAfterClone=$(freeKilobytesIn "$(dirname "$canonicalPath")")
   echo "$canonicalPath" > "$clonePath/.gitto"
 
   detachInheritedWorktrees "$clonePath"
@@ -260,7 +302,7 @@ createClone() {
       name the revision you want, such as the canonical as it stands:
         gitto new $cloneName HEAD"
   fi
-  git -C "$clonePath" checkout --quiet -B "$cloneName" "$baseRevision" \
+  git -C "$clonePath" checkout --quiet -B "$branchName" "$baseRevision" \
     || fail "the canonical holds changes that collide with $baseRevision.
       commit or drop them there, or make the clone at the canonical's own
       revision, which carries everything as it stands:
@@ -271,12 +313,27 @@ createClone() {
     git -C "$clonePath" submodule update --quiet --init --recursive
   fi
 
+  clonedKilobytes=$((freeKilobytesBeforeClone - freeKilobytesAfterClone))
+  [ "$clonedKilobytes" -ge 0 ] || clonedKilobytes=0
+  git -C "$clonePath" config --local gitto.diskKilobytes "$clonedKilobytes"
+
   cloneUnderConstruction=""
   trap - EXIT INT TERM
   reportCarriedChanges "$clonePath" "$canonicalPath" "$baseRevision"
-  reportCanonicalReferences "$clonePath" "$canonicalPath"
-  echo "  branch $cloneName on $baseRevision, $(git -C "$clonePath" submodule status --recursive | wc -l | tr -d ' ') submodules"
+  reportCanonicalReferences "$clonePath" "$canonicalPath" || true
+  echo "  branch $branchName on $baseRevision, $(git -C "$clonePath" submodule status --recursive | wc -l | tr -d ' ') submodules, $(humanKilobytes "$clonedKilobytes") of disk"
   echo "$clonePath"
+}
+
+humanKilobytes() {
+  kilobytes="$1"
+  if [ "$kilobytes" -ge 1048576 ]; then
+    echo "$((kilobytes / 1048576)) GB"
+  elif [ "$kilobytes" -ge 1024 ]; then
+    echo "$((kilobytes / 1024)) MB"
+  else
+    echo "$kilobytes KB"
+  fi
 }
 
 eachClone() {
@@ -288,18 +345,80 @@ eachClone() {
   done
 }
 
+branchOf() {
+  git -C "$1" symbolic-ref --short -q HEAD || echo DETACHED
+}
+
+dirtyCountOf() {
+  git -C "$1" status --porcelain | wc -l | tr -d ' '
+}
+
+unpushedCountOf() {
+  git -C "$1" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' '
+}
+
+diskKilobytesOf() {
+  git -C "$1" config --local --get gitto.diskKilobytes 2>/dev/null || echo ""
+}
+
+behindCountOf() {
+  git -C "$1" rev-list --count 'HEAD..@{upstream}' 2>/dev/null || echo 0
+}
+
+describeCanonical() {
+  canonicalPath="$1"
+  behindCount=$(behindCountOf "$canonicalPath")
+  staleness=""
+  [ "$behindCount" -gt 0 ] && staleness="  $behindCount behind $(git -C "$canonicalPath" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || echo upstream)"
+  echo "canonical $(basename "$canonicalPath")  $(branchOf "$canonicalPath")$staleness"
+  [ "$behindCount" -gt 0 ] && echo "  every clone starts from what the canonical holds; 'gitto sync' updates it"
+  return 0
+}
+
 describeClone() {
   clonePath="$1"
-  currentBranch=$(git -C "$clonePath" symbolic-ref --short -q HEAD || echo DETACHED)
-  dirtyCount=$(git -C "$clonePath" status --porcelain | wc -l | tr -d ' ')
-  unpushedCount=$(git -C "$clonePath" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' ')
-  printf "%-24s %-22s dirty=%-5s unpushed=%s\n" "$(basename "$clonePath")" "$currentBranch" "$dirtyCount" "$unpushedCount"
+  diskKilobytes=$(diskKilobytesOf "$clonePath")
+  [ -n "$diskKilobytes" ] && diskColumn=$(humanKilobytes "$diskKilobytes") || diskColumn="?"
+  printf "%-24s %-22s dirty=%-5s unpushed=%-5s %s\n" \
+    "$(basename "$clonePath")" "$(branchOf "$clonePath")" \
+    "$(dirtyCountOf "$clonePath")" "$(unpushedCountOf "$clonePath")" "$diskColumn"
+}
+
+shortNameOf() {
+  clonePath="$1"
+  canonicalPath="$2"
+  echo "${clonePath#"$canonicalPath"-}"
+}
+
+describeCloneAsJson() {
+  clonePath="$1"
+  canonicalPath="$2"
+  diskKilobytes=$(diskKilobytesOf "$clonePath")
+  printf '    {"name": "%s", "directory": "%s", "path": "%s", "branch": "%s", "dirty": %s, "unpushed": %s, "diskKilobytes": %s}' \
+    "$(jsonString "$(shortNameOf "$clonePath" "$canonicalPath")")" \
+    "$(jsonString "$(basename "$clonePath")")" "$(jsonString "$clonePath")" \
+    "$(jsonString "$(branchOf "$clonePath")")" "$(dirtyCountOf "$clonePath")" \
+    "$(unpushedCountOf "$clonePath")" "${diskKilobytes:-null}"
 }
 
 listClones() {
   canonicalPath=$(resolveCanonical)
-  echo "canonical $(basename "$canonicalPath")  $(git -C "$canonicalPath" symbolic-ref --short -q HEAD || echo DETACHED)"
-  eachClone "$canonicalPath" | while read -r clonePath; do describeClone "$clonePath"; done
+  if [ "$(readFlag --json "$@")" = no ]; then
+    describeCanonical "$canonicalPath"
+    eachClone "$canonicalPath" | while read -r clonePath; do describeClone "$clonePath"; done
+    return 0
+  fi
+  printf '{\n  "canonical": {"name": "%s", "path": "%s", "branch": "%s", "behind": %s},\n  "clones": [\n' \
+    "$(jsonString "$(basename "$canonicalPath")")" "$(jsonString "$canonicalPath")" \
+    "$(jsonString "$(branchOf "$canonicalPath")")" "$(behindCountOf "$canonicalPath")"
+  separator=""
+  eachClone "$canonicalPath" | while read -r clonePath; do
+    printf '%s' "$separator"
+    describeCloneAsJson "$clonePath" "$canonicalPath"
+    separator=",\n"
+    printf '\n'
+  done
+  printf '  ]\n}\n'
 }
 
 worktreesHostedOutside() {
@@ -353,13 +472,137 @@ diagnoseClone() {
   done
 }
 
+mergedIntoUpstream() {
+  clonePath="$1"
+  canonicalPath="$2"
+  mergeTarget=$(git -C "$canonicalPath" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)
+  git -C "$clonePath" merge-base --is-ancestor HEAD "$mergeTarget" 2>/dev/null
+}
+
+pruneClones() {
+  canonicalPath=$(resolveCanonical)
+  removing=$(readFlag --remove "$@")
+  found=no
+  for clonePath in $(eachClone "$canonicalPath"); do
+    [ "$(dirtyCountOf "$clonePath")" -eq 0 ] || continue
+    [ "$(unpushedCountOf "$clonePath")" -eq 0 ] || continue
+    [ -z "$(worktreesHostedOutside "$clonePath")" ] || continue
+    mergedIntoUpstream "$clonePath" "$canonicalPath" || continue
+    found=yes
+    if [ "$removing" = yes ]; then
+      rm -rf "$clonePath"
+      echo "removed $(basename "$clonePath")"
+    else
+      echo "$(basename "$clonePath")  $(branchOf "$clonePath")  merged, nothing to lose"
+    fi
+  done
+  [ "$found" = yes ] || { echo "nothing to prune"; return 0; }
+  [ "$removing" = yes ] || echo "run 'gitto prune --remove' to delete these"
+}
+
+syncCanonical() {
+  canonicalPath=$(resolveCanonical)
+  requireIndependentCheckout "$canonicalPath"
+  git -C "$canonicalPath" fetch --quiet origin || fail "the canonical has no origin to fetch from"
+  behindCount=$(behindCountOf "$canonicalPath")
+  if [ "$behindCount" -eq 0 ]; then
+    echo "canonical $(basename "$canonicalPath") is up to date"
+  else
+    git -C "$canonicalPath" merge --ff-only --quiet '@{upstream}' \
+      || fail "the canonical cannot move $behindCount commits forward.
+      it holds commits its upstream does not, or local changes the move would
+      overwrite. git said why just above."
+    git -C "$canonicalPath" submodule update --quiet --init --recursive
+    echo "canonical $(basename "$canonicalPath") moved $behindCount commits forward"
+  fi
+  [ -f "$canonicalPath/.gitto-refresh" ] || {
+    echo "  a .gitto-refresh script in the canonical would rebuild what a clone inherits"
+    return 0
+  }
+  echo "  running .gitto-refresh"
+  ( cd "$canonicalPath" && sh .gitto-refresh ) || fail ".gitto-refresh failed, so the canonical is not ready to clone from"
+}
+
+printClonePath() {
+  [ $# -ge 1 ] || printUsage
+  canonicalPath=$(resolveCanonical)
+  clonePath="$canonicalPath-$1"
+  [ -f "$clonePath/.gitto" ] || fail "not a gitto: $clonePath"
+  echo "$clonePath"
+}
+
+adoptCanonical() {
+  [ $# -ge 1 ] || printUsage
+  newCanonical=$(absolutePathOf "$1") || fail "no such directory: $1"
+  repositoryRoot=$(repositoryRootOf "$PWD") || fail "not inside a git repository"
+  [ -f "$repositoryRoot/.gitto" ] || fail "this is not a clone, so it has no canonical to point at"
+  [ -d "$newCanonical/.git" ] || fail "that is not an independent checkout: $newCanonical"
+  echo "$newCanonical" > "$repositoryRoot/.gitto"
+  echo "$(basename "$repositoryRoot") now follows $(basename "$newCanonical")"
+}
+
+printShellInit() {
+  cat <<'INIT'
+gitto() {
+  case "${1:-}" in
+    new)
+      gittoOutput=$(command gitto "$@") || { printf '%s\n' "$gittoOutput" >&2; return 1; }
+      printf '%s\n' "$gittoOutput"
+      cd "$(printf '%s\n' "$gittoOutput" | tail -1)" || return
+      ;;
+    cd)
+      [ -n "${2:-}" ] || { command gitto list; return; }
+      cd "$(command gitto path "$2")" || return
+      ;;
+    *) command gitto "$@" ;;
+  esac
+}
+
+_gittoCloneNames() {
+  command gitto list --json 2>/dev/null | sed -n 's/.*"name": "\([^"]*\)".*/\1/p'
+}
+
+_gittoCommands='new list remove prune doctor sync path adopt shell-init version'
+
+if [ -n "${ZSH_VERSION:-}" ]; then
+  _gitto() {
+    if (( CURRENT == 2 )); then
+      compadd -- ${=_gittoCommands}
+    else
+      case "${words[2]}" in
+        remove|doctor|path|cd) compadd -- $(_gittoCloneNames) ;;
+      esac
+    fi
+  }
+  compdef _gitto gitto
+elif [ -n "${BASH_VERSION:-}" ]; then
+  _gitto() {
+    if [ "$COMP_CWORD" -eq 1 ]; then
+      COMPREPLY=($(compgen -W "$_gittoCommands" -- "${COMP_WORDS[COMP_CWORD]}"))
+    else
+      case "${COMP_WORDS[1]}" in
+        remove|doctor|path|cd) COMPREPLY=($(compgen -W "$(_gittoCloneNames)" -- "${COMP_WORDS[COMP_CWORD]}")) ;;
+      esac
+    fi
+  }
+  complete -F _gitto gitto
+fi
+INIT
+}
+
 [ $# -ge 1 ] || printUsage
 command="$1"
 shift
 case "$command" in
   new) createClone "$@" ;;
-  list) listClones ;;
+  list) listClones "$@" ;;
   remove) removeClone "$@" ;;
+  prune) pruneClones "$@" ;;
   doctor) diagnoseClone "$@" ;;
+  sync) syncCanonical ;;
+  path) printClonePath "$@" ;;
+  adopt) adoptCanonical "$@" ;;
+  shell-init) printShellInit ;;
+  version) echo "gitto $gittoVersion" ;;
   *) printUsage ;;
 esac

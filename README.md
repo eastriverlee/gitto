@@ -75,19 +75,28 @@ sh gitto/tests/run
 ## Commands
 
 ```
-gitto new <name> [<base>]   make a clone of the canonical checkout
-gitto list                  show every clone beside the canonical
-gitto remove <name>         remove a clone holding nothing unpushed
-gitto doctor [<name>]       report references pointing outside a clone
+gitto new <name> [<base>] [--branch <branch>]   make a clone of the canonical
+gitto list [--json]                             show every clone and its cost
+gitto sync                                      bring the canonical up to date
+gitto prune [--remove]                          drop the clones whose work landed
+gitto remove <name>                             remove one that holds nothing
+gitto doctor [<name>] [--json]                  report what points outside a clone
+gitto path <name>                               print where a clone lives
+gitto adopt <canonical>                         re-point a clone at a moved canonical
+gitto shell-init                                emit the shell function
+gitto version                                   print the version
 ```
 
-One checkout is the canonical, and nothing is worked on there. Clones appear
-beside it as `<canonical>-<name>`, and each records where it came from in a
-`.gitto` file, so the commands work from either side.
+Add the shell function once and `gitto new` takes you to what it made:
 
-`<base>` defaults to `origin/HEAD`, and submodules move to the pointers it
-records. Pass `HEAD` to branch where the canonical stands, carrying its
-uncommitted work and leaving its submodules exactly as they are.
+```sh
+eval "$(gitto shell-init)"
+```
+
+A command cannot change the directory of the shell that started it, so moving
+into a new clone needs a function. It also adds `gitto cd` and completions for
+bash and zsh.
+
 
 ## What it repairs
 

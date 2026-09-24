@@ -40,6 +40,15 @@ for the first time. It does not sync, watch or merge anything. It never writes
 to the canonical checkout, and it never reaches the network except through the
 `git fetch` that `new` runs before it picks a base.
 
+## Setting up the shell
+
+A command cannot change the directory of the shell that started it. Add the
+function once and `gitto new` takes you to what it made:
+
+```sh
+eval "$(gitto shell-init)"
+```
+
 ## Where to go next
 
 Read [Concepts](/docs/concepts) for the four words the refusals are written in,
@@ -108,97 +117,177 @@ success either way. See [Measuring the filesystem](/docs/how-it-works/measuring-
 
 # Commands
 
-Every command takes the canonical from where you run it, and every one of them
-refuses when it cannot be sure.
+Every command finds the canonical from wherever you run it, so a clone answers
+the same as the checkout it came from.
 
 ## new
 
 ```
-gitto new <name> [<base>]
+gitto new <name> [<base>] [--branch <branch>]
 ```
 
-Copies the canonical into `<canonical>-<name>` beside it, puts the copy on a
-branch called `<name>`, and prints the path.
+Copies the canonical into `<canonical>-<name>` beside it, puts the copy on a new
+branch, and prints where it landed. The copy carries everything: history,
+submodules at every depth, dependencies, build output, and the files git was
+told to ignore.
 
 ```
 $ gitto new auth-fix
 cloning storefront -> storefront-auth-fix by clonefile
   repointed core.hooksPath at this clone's own hooks
-  branch auth-fix on origin/main, 4 submodules
+  branch auth-fix on origin/main, 4 submodules, 60 MB of disk
 /Users/you/work/storefront-auth-fix
 ```
 
+The last line is the path, so `cd "$(gitto new auth-fix | tail -1)"` works in any
+shell. The shell function from `shell-init` does it for you.
+
 ### Choosing a base
 
-`<base>` is any revision, and it defaults to `origin/HEAD` after a fetch, so a
-clone starts from the line you branch from however stale the canonical is.
+The base defaults to `origin/HEAD`, which is what you want for a branch off the
+main line. Pass `HEAD` to take the canonical exactly as it stands, including
+work it has not committed, and its submodules stay where they are.
 
-Passing `HEAD` means the canonical exactly as it stands, uncommitted work
-included, which is how you hand an agent the state you are in. With any other
-base the submodules move to the pointers that revision records; with `HEAD`
-they are left alone, because you asked for what is there.
+Any other base moves the tree and the submodules to what that revision records.
+
+### Naming the branch
+
+The branch takes the clone's name. When the branch has to be something a
+directory name cannot hold, name it:
+
+```
+gitto new auth-fix --branch feat/auth-token-refresh
+```
 
 ### What it refuses
 
 A filesystem that cannot share blocks, which is measured before anything is
-copied. A canonical that is itself a worktree, since its history lives in another
-directory and the copy would have none. A destination that already exists.
+copied. A canonical that is a worktree, because its history lives elsewhere.
+A name already taken. A base that collides with uncommitted work in the
+canonical, which `HEAD` avoids.
 
-A failure after the copy has begun removes the partial clone before it exits,
-so a run that dies has left nothing behind.
+Any failure removes the half-built clone before it exits.
 
 ## list
 
 ```
-gitto list
+gitto list [--json]
 ```
 
-Prints the canonical and every clone beside it, with each one's branch, how
-many uncommitted changes it holds and how many commits it has that its upstream
-does not.
+One line per clone: its name, its branch, how much is uncommitted, how much is
+unpushed, and what it costs on disk. The first line is the canonical and says
+how far behind its upstream it is.
 
 ```
 $ gitto list
-canonical storefront  main
-storefront-auth-fix      auth-fix               dirty=0     unpushed=0
-storefront-search        feat/search-ranking    dirty=3     unpushed=2
+canonical storefront  main  3 behind origin/main
+auth-fix          auth-fix           dirty=0     unpushed=0    60 MB
+search-ranking    feat/search        dirty=3     unpushed=2    210 MB
 ```
 
-The two counts are what `remove` reads, so this is the list of what you would
-lose.
+The disk figure is what the copy actually consumed, measured while it was made.
+`du` cannot tell you this, because it counts a shared block once for every file
+that points at it.
+
+### Reading it as a machine
+
+`--json` gives the same thing typed, with the name each command takes:
+
+```json
+{
+  "canonical": { "path": "…", "branch": "main", "behind": 3 },
+  "clones": [
+    { "name": "auth-fix", "branch": "auth-fix", "dirty": 0,
+      "unpushed": 0, "diskKilobytes": 61440, "path": "…" }
+  ]
+}
+```
+
+## sync
+
+```
+gitto sync
+```
+
+Fetches, moves the canonical forward when it can do so without a merge, and then
+runs whatever the project says brings it up to date.
+
+```
+$ gitto sync
+canonical storefront moved 3 commits forward
+  running .gitto-refresh
+```
+
+### What the project declares
+
+gitto cannot know what your project has to rebuild after a fetch. The project
+does, so it writes it down in `.gitto-refresh` at the root of the canonical:
+
+```sh
+bun install --frozen-lockfile
+make build
+```
+
+`sync` runs that file with `sh` in the canonical and says so before it starts.
+Without the file, `sync` fetches and fast-forwards and stops there.
+
+### Why it matters
+
+Every clone starts as a copy of the canonical, so a canonical three weeks behind
+hands three-week-old dependencies to every lane you open. Nothing breaks loudly
+when that happens; the install you thought you had skipped comes back. `list`
+prints the distance on its first line so the drift stays visible.
+
+## prune
+
+```
+gitto prune [--remove]
+```
+
+Lists the clones whose branch is already merged into the canonical's upstream and
+which hold nothing uncommitted or unpushed. With `--remove`, it removes them.
+
+```
+$ gitto prune
+auth-fix          merged into origin/main
+docs-typo         merged into origin/main
+2 clones can go. Pass --remove to remove them.
+```
+
+### What it leaves alone
+
+A clone with uncommitted changes, a clone with commits no remote has, a clone on
+a branch that is not merged, and a clone whose submodules host the history of
+worktrees living outside it. Each of those is what `remove` refuses, and `prune`
+refuses the same things without saying a word about them.
 
 ## doctor
 
 ```
-gitto doctor [<name>]
+gitto doctor [<name>] [--json]
 ```
 
-Reports what still points outside a clone: symlinks into the canonical,
-absolute hook paths, submodule git directories that escaped, and worktrees the
-clone hosts for someone else.
+Reports what still points outside a clone after the copy: symbolic links into the
+canonical, virtual environments holding the old path, submodule history that did
+not come along, and worktrees the clone hosts for someone else.
 
 ```
-$ gitto doctor search
-storefront-search
-  still pointing outside this clone:
-    symlink  .agents -> /Users/you/work/storefront/.agents
-    hosts    storefront-docs
+$ gitto doctor
+auth-fix
+  nothing points at the canonical
 ```
 
 ### What it can see
 
-Everything git records: configuration, worktree registrations at every
-submodule depth, and the git directory each submodule resolves to. Symlinks and
-virtualenv activation scripts, because both write their own path into a file.
+Everything git records, and the two cases that bite most often: a symbolic link
+whose target resolves outside the clone, and a virtual environment whose
+`activate` exports the path it was built at.
 
 ### What it cannot see
 
-Any reference that lives outside git. An editor workspace, a launch agent, a
-line in `~/.ssh/config`, the working directory of a shell someone left open.
-
-A clean report therefore means that nothing git knows about points at the
-canonical. Treating it as permission to delete a directory is a mistake the
-report cannot warn you about.
+Anything outside git that names a path: an ssh config, a launch agent, an editor
+workspace, a shell sitting in the directory. A clean report means the references
+git knows about are in order. It does not mean the directory is safe to delete.
 
 ## remove
 
@@ -206,24 +295,64 @@ report cannot warn you about.
 gitto remove <name>
 ```
 
-Deletes a clone, once it has established that nothing would be lost.
+Removes a clone once it holds nothing you would miss.
 
 ### What it refuses
 
-Uncommitted changes. Commits the upstream does not have. And the case that is
-easy to miss: a clone whose submodules host the git directory of a worktree
-living somewhere else.
+Uncommitted changes. Commits no remote has. Worktrees living outside the clone
+whose history its submodules hold, because removing it would leave each of them
+a directory of files with no repository.
 
 ```
-$ gitto remove search
-gitto: search hosts the history of worktrees that live outside it:
+$ gitto remove auth-fix
+gitto: auth-fix hosts the history of worktrees that live outside it:
         /Users/you/work/storefront-docs
       removing it would leave each of them without a repository.
 ```
 
-Deleting that clone would leave those worktrees as directories of files with no
-repository behind them, which git reports as a missing path long after the
-cause is gone.
+## shell-init
+
+```
+eval "$(gitto shell-init)"
+```
+
+Emits a shell function and completions for bash and zsh. The function moves you
+into a clone as it is made and adds `gitto cd`:
+
+```sh
+gitto new auth-fix        # makes it and takes you there
+gitto cd search-ranking   # moves between clones
+gitto cd                  # lists them
+```
+
+A child process cannot change the directory of the shell that started it, which
+is why moving into a new clone needs a function rather than a command.
+
+## path
+
+```
+gitto path <name>
+```
+
+Prints where a clone lives, for scripts and for `cd`.
+
+## adopt
+
+```
+gitto adopt <canonical>
+```
+
+Points a clone at a canonical that moved. A clone records where it came from, so
+moving or renaming the canonical leaves every clone naming a directory that is
+gone. `adopt` writes the new location.
+
+## version
+
+```
+gitto version
+```
+
+Prints the version the installed script carries.
 
 # How it works
 
@@ -299,6 +428,12 @@ Yes, and what you get is another clone of the same canonical. Each clone
 records where it came from in a `.gitto` file, so every command resolves the
 canonical from wherever you are standing, and a chain of clones of clones
 cannot form.
+
+### How do I keep the canonical current?
+
+`gitto sync` fetches, fast-forwards it, and runs `.gitto-refresh` if the project
+carries one. `gitto list` prints how far behind the canonical is on its first
+line, so the drift is visible before it costs you anything.
 
 ### How do I undo one?
 

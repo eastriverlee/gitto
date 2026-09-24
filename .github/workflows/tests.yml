@@ -1,0 +1,52 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  macos:
+    name: macOS, APFS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: git --version && df -k . | tail -1
+      - run: ./tests/run
+
+  linux:
+    name: Linux, btrfs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Make a btrfs volume and a plain ext4 one beside it
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq btrfs-progs
+          truncate -s 4G /tmp/btrfs.img
+          mkfs.btrfs -q /tmp/btrfs.img
+          sudo mkdir -p /mnt/cow /mnt/plain
+          sudo mount -o loop /tmp/btrfs.img /mnt/cow
+          sudo chown "$USER" /mnt/cow
+          truncate -s 512M /tmp/ext4.img
+          mkfs.ext4 -q /tmp/ext4.img
+          sudo mount -o loop /tmp/ext4.img /mnt/plain
+          sudo chown "$USER" /mnt/plain
+      - name: Show what the volumes are
+        run: |
+          findmnt -no FSTYPE /mnt/cow
+          findmnt -no FSTYPE /mnt/plain
+          cp --reflink=always /etc/hostname /mnt/cow/probe && echo "reflink works on /mnt/cow"
+      - run: TMPDIR=/mnt/cow GITTO_TEST_PLAIN_FILESYSTEM=/mnt/plain ./tests/run
+
+  prose:
+    name: prose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          if [ -x ~/.claude/skills/remove-ai-smell/scripts/measure ]; then
+            ~/.claude/skills/remove-ai-smell/scripts/measure README.md DOCS.md
+          else
+            echo "measure is not available on a runner; skipped"
+          fi

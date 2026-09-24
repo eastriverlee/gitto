@@ -70,7 +70,7 @@ makeRepository() {
 
 makeCanonical() {
   laboratoryName="$1"
-  root="$laboratory/$laboratoryName"
+  root="${2:-$laboratory}/$laboratoryName"
   mkdir -p "$root"
   makeRepository "$root/source"
   git clone -q --bare "$root/source" "$root/origin" 2>/dev/null
@@ -187,6 +187,110 @@ makesSiblingsFromInsideAClone() {
   expectContains 'the new clone records the canonical' "$recorded" "$canonical"
 }
 
+namesABranchOfItsOwn() {
+  canonical=$(makeCanonical branching)
+  runIn "$canonical" new auth --branch feat/auth-token-refresh HEAD >/dev/null 2>&1
+  branch=$(git -C "$canonical-auth" symbolic-ref --short HEAD)
+  expectContains 'the branch can differ from the directory' "$branch" 'feat/auth-token-refresh'
+}
+
+recordsWhatTheCloneCost() {
+  canonical=$(makeCanonical costing)
+  runIn "$canonical" new lane >/dev/null 2>&1
+  recorded=$(git -C "$canonical-lane" config --local --get gitto.diskKilobytes)
+  case "$recorded" in
+    ''|*[!0-9]*) report fail 'a clone records what it cost' "got: $recorded" ;;
+    *) report pass 'a clone records what it cost' ;;
+  esac
+  listing=$(runIn "$canonical" list 2>&1)
+  expectContains 'and the listing shows it' "$listing" 'KB'
+}
+
+emitsMachineReadableListing() {
+  canonical=$(makeCanonical json)
+  runIn "$canonical" new lane >/dev/null 2>&1
+  listing=$(runIn "$canonical" list --json 2>&1)
+  if printf '%s' "$listing" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
+    report pass 'list --json parses as JSON'
+  else
+    report fail 'list --json parses as JSON' "$listing"
+  fi
+  name=$(printf '%s' "$listing" | python3 -c 'import json,sys; print(json.load(sys.stdin)["clones"][0]["name"])' 2>/dev/null || echo '')
+  expectContains 'and names the clone as remove takes it' "$name" 'lane'
+}
+
+reportsAStaleCanonical() {
+  canonical=$(makeCanonical stale)
+  printf 'two\n' > "$canonical/file.txt"
+  git -C "$canonical" commit -qam second
+  git -C "$canonical" push -q origin main
+  git -C "$canonical" reset -q --hard HEAD~1
+  listing=$(runIn "$canonical" list 2>&1)
+  expectContains 'a canonical behind its upstream says so' "$listing" '1 behind'
+  expectContains 'and points at the command that fixes it' "$listing" 'gitto sync'
+}
+
+bringsTheCanonicalUpToDate() {
+  canonical=$(makeCanonical syncing)
+  printf 'echo refreshed > refreshed.txt\n' > "$canonical/.gitto-refresh"
+  git -C "$canonical" add .gitto-refresh
+  git -C "$canonical" commit -qm refresh
+  printf 'two\n' > "$canonical/file.txt"
+  git -C "$canonical" commit -qam second
+  git -C "$canonical" push -q origin main
+  git -C "$canonical" reset -q --hard HEAD~2
+
+  output=$(runIn "$canonical" sync 2>&1)
+  expectContains 'sync moves the canonical forward' "$output" 'commits forward'
+  expectContains 'and runs the refresh the project declares' "$output" '.gitto-refresh'
+  expectPath 'which leaves its work behind' "$canonical/refreshed.txt"
+
+  again=$(runIn "$canonical" sync 2>&1)
+  expectContains 'a canonical already current says so' "$again" 'up to date'
+}
+
+prunesOnlyWhatIsMerged() {
+  canonical=$(makeCanonical pruning)
+  runIn "$canonical" new merged >/dev/null 2>&1
+  runIn "$canonical" new ahead >/dev/null 2>&1
+  printf 'work\n' > "$canonical-ahead/file.txt"
+  git -C "$canonical-ahead" commit -qam work
+  preview=$(runIn "$canonical" prune 2>&1)
+  expectContains 'prune names a merged clone' "$preview" 'merged'
+  expectMissing 'and leaves one holding commits alone' "$preview" 'ahead  ahead'
+  expectPath 'nothing is deleted without --remove' "$canonical-merged/.gitto"
+  runIn "$canonical" prune --remove >/dev/null 2>&1
+  expectNoPath 'and --remove deletes it' "$canonical-merged"
+  expectPath 'while the one with work survives' "$canonical-ahead/.gitto"
+}
+
+findsACanonicalThatMoved() {
+  canonical=$(makeCanonical moving)
+  runIn "$canonical" new lane >/dev/null 2>&1
+  mv "$canonical" "$canonical-elsewhere"
+  refusal=$( ( cd "$canonical-lane" && "$gitto" list 2>&1 ) || true )
+  expectContains 'a clone whose canonical vanished says so' "$refusal" 'records a canonical that is gone'
+  ( cd "$canonical-lane" && "$gitto" adopt "$canonical-elsewhere" >/dev/null 2>&1 )
+  listing=$( cd "$canonical-lane" && "$gitto" list 2>&1 )
+  expectContains 'and adopt points it at the new place' "$listing" 'canonical'
+}
+
+printsItsVersion() {
+  version=$("$gitto" version 2>&1)
+  expectContains 'version prints one' "$version" 'gitto '
+}
+
+emitsAShellFunction() {
+  init=$("$gitto" shell-init 2>&1)
+  expectContains 'shell-init defines the wrapper' "$init" 'gitto() {'
+  expectContains 'and completions' "$init" 'compdef _gitto gitto'
+  if printf '%s' "$init" | sh -n 2>/dev/null; then
+    report pass 'and what it emits is valid shell'
+  else
+    report fail 'and what it emits is valid shell' 'sh -n rejected it'
+  fi
+}
+
 handlesCheckoutWithoutOrigin() {
   root="$laboratory/noremote"
   makeRepository "$root"
@@ -231,24 +335,44 @@ reportsPlantedReferences() {
   expectContains 'a symlink into the canonical is reported' "$planted" 'symlink'
 }
 
+everyManifestAgreesOnTheVersion() {
+  repository=$(cd "$(dirname "$0")/.." && pwd)
+  declared=$("$gitto" version | awk '{print $2}')
+  for manifest in plugins/gitto/plugin.json plugins/gitto/.claude-plugin/plugin.json; do
+    stated=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$repository/$manifest" | head -1)
+    if [ "$stated" = "$declared" ]; then
+      report pass "$manifest agrees the version is $declared"
+    else
+      report fail "$manifest agrees the version is $declared" "it says $stated"
+    fi
+  done
+}
+
 refusesWhenBlocksCannotBeShared() {
-  image="$laboratory/nocow.dmg"
-  mount="/Volumes/GittoNoCow"
-  hdiutil create -quiet -size 60m -fs HFS+ -volname GittoNoCow "$image" >/dev/null 2>&1 || {
-    report pass 'a filesystem without block sharing is refused (skipped, no hdiutil)'
-    return 0
+  if [ -n "${GITTO_TEST_PLAIN_FILESYSTEM:-}" ]; then
+    checkRefusalOn "$GITTO_TEST_PLAIN_FILESYSTEM"
+    return
+  fi
+
+  image=$(mktemp -d)/nocow.dmg
+  mount=/Volumes/GittoNoCow
+  hdiutil create -quiet -size 256m -fs HFS+ -volname GittoNoCow "$image" >/dev/null 2>&1 || {
+    report pass 'a filesystem without block sharing is refused (skipped, no plain filesystem)'
+    return
   }
   hdiutil attach -quiet -nobrowse "$image" >/dev/null 2>&1
-  makeRepository "$mount/canonical"
-  refusal=$( ( cd "$mount/canonical" && "$gitto" new lane HEAD 2>&1 ) || true )
-  leftover=$([ -e "$mount/canonical-lane" ] && echo yes || echo no)
+  checkRefusalOn "$mount"
   hdiutil detach -quiet "$mount" >/dev/null 2>&1 || true
-  expectContains 'a filesystem without block sharing is refused' "$refusal" 'costs the full size'
-  if [ "$leftover" = no ]; then
-    report pass 'and no partial clone is left on it'
-  else
-    report fail 'and no partial clone is left on it' "$mount/canonical-lane survived"
-  fi
+}
+
+checkRefusalOn() {
+  plainRoot="$1/gitto-tests.$$"
+  mkdir -p "$plainRoot"
+  canonical=$(makeCanonical flat "$plainRoot")
+  output=$(runIn "$canonical" new lane 2>&1 || true)
+  expectContains 'a filesystem without block sharing is refused' "$output" 'costs the full size'
+  expectNoPath 'and leaves nothing behind' "$canonical-lane"
+  rm -rf "$plainRoot"
 }
 
 printf 'gitto tests\n\n'
@@ -260,11 +384,21 @@ for testName in \
   refusesToOrphanWorktrees \
   refusesToLoseWork \
   makesSiblingsFromInsideAClone \
+  namesABranchOfItsOwn \
+  recordsWhatTheCloneCost \
+  emitsMachineReadableListing \
+  reportsAStaleCanonical \
+  bringsTheCanonicalUpToDate \
+  prunesOnlyWhatIsMerged \
+  findsACanonicalThatMoved \
+  printsItsVersion \
+  emitsAShellFunction \
   survivesSpacesInPaths \
   handlesCheckoutWithoutOrigin \
   leavesSubmodulesAloneForHead \
   reportsPlantedReferences \
-  refusesWhenBlocksCannotBeShared
+  refusesWhenBlocksCannotBeShared \
+  everyManifestAgreesOnTheVersion
 do
   "$testName" || report fail "$testName" 'the test itself failed'
 done
