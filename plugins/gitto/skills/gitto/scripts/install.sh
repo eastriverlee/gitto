@@ -8,10 +8,7 @@
 # fetches the script from the repository.
 set -eu
 
-REPOSITORY="eastriverlee/gitto"
-SOURCE_PATH="plugins/gitto/skills/gitto/scripts/gitto"
 INSTALL_DIRECTORY="${INSTALL_DIRECTORY:-$HOME/.local/bin}"
-GITTO_REF="${GITTO_REF:-main}"
 
 scriptDirectory=$(cd "$(dirname "$0")" && pwd)
 destination="$INSTALL_DIRECTORY/gitto"
@@ -22,7 +19,7 @@ if [ -f "$scriptDirectory/gitto" ]; then
     cp "$scriptDirectory/gitto" "$destination"
     echo "installed $destination from $scriptDirectory/gitto"
 else
-    url="https://raw.githubusercontent.com/$REPOSITORY/$GITTO_REF/$SOURCE_PATH"
+    url="${GITTO_SOURCE_URL:-https://gitto.13e7.co/gitto}"
     curl -fsSL "$url" -o "$destination"
     echo "installed $destination from $url"
 fi

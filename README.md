@@ -33,7 +33,7 @@ hooks and reading its configuration.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/eastriverlee/gitto/main/plugins/gitto/skills/gitto/scripts/install.sh | sh
+curl -fsSL https://gitto.13e7.co/install | sh
 ```
 
 ### As a plugin

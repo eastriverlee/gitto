@@ -7,7 +7,7 @@
     "name": "eastriverlee",
     "url": "https://github.com/eastriverlee"
   },
-  "homepage": "https://github.com/eastriverlee/gitto",
+  "homepage": "https://gitto.13e7.co",
   "commands": "./.claude-plugin/commands/",
   "hooks": "./.claude-plugin/hooks.json"
 }

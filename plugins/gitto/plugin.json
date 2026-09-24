@@ -7,8 +7,17 @@
     "name": "eastriverlee",
     "url": "https://github.com/eastriverlee"
   },
-  "homepage": "https://gitto.dev",
+  "homepage": "https://gitto.13e7.co",
   "repository": "https://github.com/eastriverlee/gitto",
   "license": "MIT",
-  "keywords": ["git", "worktree", "clone", "copy-on-write", "reflink", "apfs", "submodules", "coding-agent"]
+  "keywords": [
+    "git",
+    "worktree",
+    "clone",
+    "copy-on-write",
+    "reflink",
+    "apfs",
+    "submodules",
+    "coding-agent"
+  ]
 }
