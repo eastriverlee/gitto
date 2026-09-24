@@ -293,11 +293,12 @@ gitto: copying here costs the full size, so a clone would too.
       ext4 and tmpfs cannot share blocks at all.
 ```
 
-### Can I clone a clone?
+### Can I run it from inside a clone?
 
-Yes. A clone is an ordinary checkout, so running `gitto new` inside one makes
-the clone the canonical for whatever it produces. The `.gitto` marker records
-which directory each copy came from.
+Yes, and what you get is another clone of the same canonical. Each clone
+records where it came from in a `.gitto` file, so every command resolves the
+canonical from wherever you are standing, and a chain of clones of clones
+cannot form.
 
 ### How do I undo one?
 

@@ -177,6 +177,16 @@ survivesSpacesInPaths() {
   expectContains 'and it can be removed' "$removal" 'removed'
 }
 
+makesSiblingsFromInsideAClone() {
+  canonical=$(makeCanonical siblings)
+  runIn "$canonical" new first >/dev/null 2>&1
+  runIn "$canonical-first" new second >/dev/null 2>&1
+  expectPath 'a clone made from inside a clone is a sibling' "$canonical-second/.gitto"
+  expectNoPath 'and never a clone of the clone' "$canonical-first-second"
+  recorded=$(cat "$canonical-second/.gitto")
+  expectContains 'the new clone records the canonical' "$recorded" "$canonical"
+}
+
 handlesCheckoutWithoutOrigin() {
   root="$laboratory/noremote"
   makeRepository "$root"
@@ -249,6 +259,7 @@ for testName in \
   dropsNestedWorktrees \
   refusesToOrphanWorktrees \
   refusesToLoseWork \
+  makesSiblingsFromInsideAClone \
   survivesSpacesInPaths \
   handlesCheckoutWithoutOrigin \
   leavesSubmodulesAloneForHead \
