@@ -32,8 +32,23 @@ export const samples = {
 	list: {
 		code: 'gitto list',
 		output: `canonical storefront  main
-storefront-auth-fix      auth-fix               dirty=0     unpushed=0
-storefront-search        feat/search-ranking    dirty=3     unpushed=2`,
+storefront-auth-fix      auth-fix               dirty=0     unpushed=0   idle=12m   new=60 MB
+storefront-search        feat/search-ranking    dirty=3     unpushed=2   idle=6d    new=210 MB`,
+	},
+	refuseSubmodule: {
+		code: 'gitto remove auth-fix',
+		output: `gitto: auth-fix holds 1 commits no remote has, in it or in a submodule.
+      push them, or keep them with 'gitto remove auth-fix --archive'.`,
+	},
+	archive: {
+		code: 'gitto remove spike-oauth --archive',
+		output: `removed storefront-spike-oauth, and what it held is in
+  /Users/you/work/storefront.gitto-archive/spike-oauth-20260925-104233`,
+	},
+	waiting: {
+		code: 'gitto new auth-fix',
+		output: `waiting for gitto sync in storefront
+cloning storefront -> storefront-auth-fix by clonefile`,
 	},
 	doctor: {
 		code: 'gitto doctor auth-fix',

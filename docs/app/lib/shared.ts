@@ -1,6 +1,8 @@
 import { createGetUrl } from 'fumadocs-core/source';
 
 export const appName = 'gitto';
+export const siteDescription =
+	"gitto copies a whole working directory with the filesystem's own clone call: history, submodules, dependencies and build output, then re-addresses what the copy would break. Nothing is duplicated until one side writes.";
 export const siteOrigin = 'https://gitto.13e7.co';
 export const docsOrigin = siteOrigin;
 export const docsRoute = '/docs';

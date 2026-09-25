@@ -1,14 +1,11 @@
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { docsRoute, siteOrigin } from '../app/lib/shared';
+import { docsRoute, siteDescription, siteOrigin } from '../app/lib/shared';
 
 const repository = join(import.meta.dirname, '..', '..');
 const content = join(import.meta.dirname, '..', 'content', 'docs');
 const assets = join(import.meta.dirname, '..', 'public');
 const skill = join(repository, 'plugins', 'gitto', 'skills', 'gitto');
-
-const siteDescription =
-	'git worktree copies tracked files. gitto copies the whole checkout, dependencies and build output included, in seconds and for no disk.';
 
 const slugOverrides: Record<string, string> = {
 	'Q&A': 'questions',
@@ -43,6 +40,7 @@ const sidebarIcons: Record<string, string> = {
 	questions: 'MessageCircleQuestion',
 	'from-source': 'Package',
 	caveats: 'TriangleAlert',
+	comparison: 'GitCompare',
 };
 
 const groupDescriptions: Record<string, string> = {
@@ -55,6 +53,7 @@ const groupDescriptions: Record<string, string> = {
 	questions: 'Short answers to what people ask before they install it.',
 	'from-source': 'Building it from a checkout of the repository.',
 	caveats: 'What it cannot see, and what a copy cannot carry.',
+	comparison: 'Worktree managers, whole-tree CoW clones, and what each one leaves you holding.',
 };
 
 /** The two columns of the table a group index opens with. */
@@ -189,7 +188,16 @@ for (const name of ['Install', 'Plugin', 'From source']) {
 
 /** Q&A is written as questions, so its pages live one level down. */
 const groupLevel = (title: string) => (title === 'Q&A' ? 3 : 2);
-for (const group of groups) writeGroup(slugOf(group.title), group.title, group.text, groupLevel(group.title));
+/** A part whose headings are its own argument, not a page each. */
+const wholePages = new Set(['Comparison']);
+for (const group of groups) {
+	const slug = slugOf(group.title);
+	if (wholePages.has(group.title)) {
+		writePage(slug, group.title, group.text, { description: groupDescriptions[slug], icon: sidebarIcons[slug] });
+		continue;
+	}
+	writeGroup(slug, group.title, group.text, groupLevel(group.title));
+}
 
 const order = ['index', 'install', 'plugin', 'from-source', ...groups.map((group) => slugOf(group.title))];
 writeFileSync(join(content, 'meta.json'), JSON.stringify({ title: 'gitto', pages: order }, null, 2) + '\n');

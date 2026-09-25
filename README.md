@@ -76,10 +76,10 @@ sh gitto/tests/run
 
 ```
 gitto new <name> [<base>] [--branch <branch>]   make a clone of the canonical
-gitto list [--json]                             show every clone and its cost
+gitto list [--json] [--measure]                 show every clone, its age and its cost
 gitto sync                                      bring the canonical up to date
-gitto prune [--remove]                          drop the clones whose work landed
-gitto remove <name>                             remove one that holds nothing
+gitto prune [--remove] [--stale <days>]         drop the clones whose work landed
+gitto remove <name> [--archive]                 remove one, keeping what it holds
 gitto doctor [<name>] [--json]                  report what points outside a clone, and what it hosts
 gitto path <name>                               print where a clone lives
 gitto adopt <canonical>                         re-point a clone at a moved canonical
@@ -98,6 +98,23 @@ A command cannot change the directory of the shell that started it, so moving
 into a new clone needs a function. It also adds `gitto cd` and completions for
 bash and zsh.
 
+
+## Several at once
+
+Copying reads the canonical and `sync` writes to it, so both announce themselves
+in a lock the canonical carries. Any number of clones can be taken at once; a
+clone taken during a `sync` waits for it rather than copying a tree that is
+moving.
+
+A clone is removed only when nothing would be lost, and both counts read the
+submodules: a commit made inside one and pushed nowhere stops the removal, where
+`git status` at the top level shows a clean tree. `remove --archive` and
+`prune --stale <days>` take one anyway, bundling the checkout and every
+submodule beside the canonical and reading each bundle back before anything is
+deleted.
+
+[How it compares](https://gitto.13e7.co/docs/comparison) to worktree managers
+and to the other whole-tree copies.
 
 ## What it repairs
 

@@ -168,26 +168,79 @@ canonical, which `HEAD` avoids.
 
 Any failure removes the half-built clone before it exits.
 
+### While something else holds the canonical
+
+A clone reads the canonical as it copies, and `sync` writes to it. Both announce
+themselves in the same lock, so several clones can be taken at once and a clone
+taken during a `sync` waits for it instead of copying a tree that is moving.
+
+```
+$ gitto new auth-fix
+waiting for gitto sync in storefront
+```
+
+A lock whose holder is no longer running is taken, and the run that takes it says
+so. `GITTO_LOCK_TIMEOUT` sets how long a run waits before it gives up, 1800
+seconds by default.
+
+### What it inherits, and how old that is
+
+A clone checks out `origin/HEAD` from a fetch of its own, so its tracked files
+are current even when the canonical is behind. Everything git does not track
+comes from the canonical instead, and is exactly as old as the canonical is:
+
+```
+$ gitto new auth-fix
+  the canonical is 43 commits behind origin/main, so what it had built is that old
+  dependencies and build output came from there; 'gitto sync' moves it and runs .gitto-refresh
+```
+
 ## list
 
 ```
-gitto list [--json]
+gitto list [--json] [--measure]
 ```
 
 One line per clone: its name, its branch, how much is uncommitted, how much is
-unpushed, and what it costs on disk. The first line is the canonical and says
-how far behind its upstream it is.
+unpushed, how long since anything happened in it, and what the copy cost when it
+was made. The first line is the canonical and says how far behind its upstream
+it is.
 
 ```
 $ gitto list
 canonical storefront  main  3 behind origin/main
-auth-fix          auth-fix           dirty=0     unpushed=0    60 MB
-search-ranking    feat/search        dirty=3     unpushed=2    210 MB
+auth-fix          auth-fix           dirty=0     unpushed=0   idle=12m   new=60 MB
+search-ranking    feat/search        dirty=3     unpushed=2   idle=6d    new=210 MB
 ```
 
-The disk figure is what the copy actually consumed, measured while it was made.
-`du` cannot tell you this, because it counts a shared block once for every file
-that points at it.
+`dirty` and `unpushed` count the submodules too, so a commit sitting in a
+submodule that no remote has is in the number that decides whether the clone can
+go.
+
+### What the disk figures mean
+
+`new=` is what the copy consumed at the moment it was made, measured as the free
+space the machine lost while it ran. It does not move afterwards. A clone that
+has since installed and built has written over blocks it used to share, and the
+figure has nothing to say about that.
+
+`--measure` walks each clone with `du` and adds what it allocates now:
+
+```
+$ gitto list --measure
+auth-fix          auth-fix           dirty=0     unpushed=0   idle=12m   new=60 MB  allocated=13 GB
+```
+
+That figure is an upper bound. `du` counts a shared block once for every file
+that points at it, so two clones sharing a block are each charged for it, and
+the walk costs a full directory traversal per clone.
+
+### Idleness
+
+`idle=` is the time since the newest of three things: the last commit, the last
+line written to the reflog, and the modification time of the clone's own
+directory. It deliberately ignores `.git/index`, which `git status` rewrites,
+because `gitto list` would then reset the number it was about to report.
 
 ### Reading it as a machine
 
@@ -197,8 +250,8 @@ that points at it.
 {
   "canonical": { "path": "…", "branch": "main", "behind": 3 },
   "clones": [
-    { "name": "auth-fix", "branch": "auth-fix", "dirty": 0,
-      "unpushed": 0, "diskKilobytes": 61440, "path": "…" }
+    { "name": "auth-fix", "branch": "auth-fix", "dirty": 0, "unpushed": 0,
+      "idleSeconds": 720, "diskKilobytesAtCreation": 61440, "path": "…" }
   ]
 }
 ```
@@ -210,7 +263,8 @@ gitto sync
 ```
 
 Fetches, moves the canonical forward when it can do so without a merge, and then
-runs whatever the project says brings it up to date.
+runs whatever the project says brings it up to date. It holds the canonical
+alone while it runs, so no clone is copied out of a tree that is moving.
 
 ```
 $ gitto sync
@@ -241,7 +295,7 @@ prints the distance on its first line so the drift stays visible.
 ## prune
 
 ```
-gitto prune [--remove]
+gitto prune [--remove] [--stale <days>]
 ```
 
 Lists the clones whose branch is already merged into the canonical's upstream and
@@ -249,9 +303,9 @@ which hold nothing uncommitted or unpushed. With `--remove`, it removes them.
 
 ```
 $ gitto prune
-auth-fix          merged into origin/main
-docs-typo         merged into origin/main
-2 clones can go. Pass --remove to remove them.
+storefront-auth-fix       auth-fix     merged, nothing to lose
+storefront-docs-typo      docs-typo    merged, nothing to lose
+run 'gitto prune --remove' to delete these
 ```
 
 ### What it leaves alone
@@ -260,6 +314,24 @@ A clone with uncommitted changes, a clone with commits no remote has, a clone on
 a branch that is not merged, and a clone whose submodules host the history of
 worktrees living outside it. Each of those is what `remove` refuses, and `prune`
 refuses the same things without saying a word about them.
+
+### The ones nobody came back to
+
+An agent that stopped halfway leaves a clone that is dirty, unmerged and never
+coming back. Plain `prune` leaves it there forever, which is correct and also
+means a lane nobody is using stays on the list.
+
+`--stale <days>` adds the clones where nothing has happened for that long:
+
+```
+$ gitto prune --stale 7
+storefront-spike-oauth    spike-oauth  untouched for 23d, and it still holds work
+run 'gitto prune --remove' to delete these
+```
+
+With `--remove`, a stale clone that still holds work is bundled into the archive
+beside the canonical before it goes, exactly as `remove --archive` does. A stale
+clone that holds nothing is simply removed.
 
 ## doctor
 
@@ -314,7 +386,7 @@ directory is safe to delete.
 ## remove
 
 ```
-gitto remove <name>
+gitto remove <name> [--archive]
 ```
 
 Removes a clone once it holds nothing you would miss.
@@ -331,6 +403,45 @@ gitto: auth-fix hosts the history of worktrees that live outside it:
         /Users/you/work/storefront-docs
       removing it would leave each of them without a repository.
 ```
+
+Both counts read the submodules as well as the checkout. A commit made inside a
+submodule and pushed nowhere is invisible to `git status` at the top level once
+its pointer has been committed, and it is the copy no remote holds:
+
+```
+$ gitto remove auth-fix
+gitto: auth-fix holds 1 commits no remote has, in it or in a submodule.
+      push them, or keep them with 'gitto remove auth-fix --archive'.
+```
+
+### Keeping what it holds
+
+`--archive` removes the clone and leaves what it held in
+`<canonical>.gitto-archive/<name>-<timestamp>`: one bundle for the checkout, one
+for each submodule, and a manifest naming the branch and commit each bundle
+carries.
+
+```
+$ gitto remove spike-oauth --archive
+removed storefront-spike-oauth, and what it held is in
+  /Users/you/work/storefront.gitto-archive/spike-oauth-20260925-104233
+```
+
+Work that was never committed is committed first, onto
+`refs/gitto-archive/uncommitted`, so the bundle carries it too. Every bundle is
+read back with `git bundle verify` before anything is deleted, and a bundle that
+does not verify stops the removal with the clone still there.
+
+Read one back with a fetch:
+
+```sh
+git init recovered && cd recovered
+git fetch ../storefront.gitto-archive/spike-oauth-20260925-104233/superproject.bundle \
+  'refs/*:refs/*'
+```
+
+The archive carries what git would carry. Ignored files are not in it, which is
+the same 9 GB of build output that made the clone cheap to begin with.
 
 ## shell-init
 
@@ -472,6 +583,62 @@ probe's own size was a full copy, whatever the exit status said.
 This matters because `cp -c` on macOS falls back to a full copy on a filesystem
 without `clonefile` and reports success. A check that read the exit status
 would call a 13 GB full copy a clone.
+
+# Comparison
+
+Running several agents at once turned "a second checkout" into a category, and
+most of it is built on `git worktree`. The table is what a new checkout arrives
+holding.
+
+| | history | submodules | ignored files, dependencies, build output | branch namespace and stash |
+| --- | --- | --- | --- | --- |
+| `git clone` | copied over the network | cloned again on request | gone | its own |
+| `git worktree` | shared | arrive uninitialised | gone | shared with every other worktree |
+| worktree managers | shared | uninitialised, unless the tool adds a step | a configured copy step, reflinked where it can be | shared |
+| whole-tree CoW clones | copied by the filesystem | copied, handling varies | carried, often as symlinks | its own |
+| `gitto` | copied by the filesystem | copied, at every depth, and re-addressed | carried, as clones of the blocks | its own |
+
+[worktrunk](https://github.com/max-sixty/worktrunk), [Conductor](https://conductor.build),
+ccmanager and Claude Code's own `isolation: worktree` are worktree managers: they
+address worktrees by branch name, give each agent a session, and inherit what a
+worktree is. worktrunk reflinks the ignored directories through a
+`copy-ignored` step, which is the same filesystem call `gitto` makes, applied to
+the part of the checkout git was told to ignore.
+
+[cow](https://github.com/joeinnes/cow) is the nearest thing to `gitto`: whole-tree
+`clonefile` on APFS, `.git` and ignored files included, with `create`, `list`,
+`remove`, `sync` and `gc`.
+
+## What is left after the copy
+
+Copying is the part everything here agrees on. What separates them is what they
+do about a directory that still remembers where it used to live.
+
+| | `gitto` | worktree managers | whole-tree CoW clones |
+| --- | --- | --- | --- |
+| `core.hooksPath`, inherited worktree registrations, submodule gitdir markers | re-addressed, at every submodule depth | not applicable, the worktree is registered | varies |
+| dependencies in the new checkout | clones of the blocks, independent from the first write | copied or reflinked by a declared step | often symlinked into the source, and made independent on request |
+| a filesystem that cannot share blocks | refused, after measuring a 32 MB probe | copies in full | warns and copies in full |
+| removing a checkout that still holds work | refused, or archived to a verified bundle | `git worktree remove` refuses a dirty tree | prompts, and `--force` overrides |
+| work committed inside a submodule and pushed nowhere | counted, and it stops the removal | not counted | not counted |
+| two runs touching the source at once | a lock the source carries | none | none |
+| a checkout that already exists | `gitto adopt` converts a worktree in place | it is already a worktree | not applicable |
+
+A symlinked dependency directory is the difference worth naming. It makes the
+new checkout cheap in the same way a clone of the blocks does, and it leaves two
+checkouts writing into one directory. A process that resolves the path it is
+given, a container mount, or anything that reads through `/proc` will see the
+source's path rather than the lane's.
+
+## What it does not try to be
+
+`gitto` makes checkouts. It has no session manager, no diff viewer, no pull
+request flow, and no opinion about which agent runs where. A worktree manager
+that wants cheaper checkouts can call it in place of `git worktree add`.
+
+It also refuses to run where the filesystem cannot share blocks, which is ext4
+and tmpfs, and ext4 is the installer default on Ubuntu and Debian. A worktree
+manager works there. This does not.
 
 # Q&A
 
