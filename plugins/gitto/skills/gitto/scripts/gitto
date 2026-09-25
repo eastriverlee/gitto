@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-gittoVersion=0.4.0
+gittoVersion=0.5.0
 
 updateInstalledScript() {
   runningScript=$0
@@ -45,8 +45,11 @@ usage: gitto <command> [arguments]
   gitto new <name> [<base>]   make a clone of the canonical checkout
       --branch <branch>       name the branch, when it differs from <name>
   gitto list [--json]         show every clone beside the canonical
+      --measure               walk each one and report what it allocates now
   gitto remove <name>         remove a clone holding nothing unpushed
+      --archive               bundle what it holds beside the canonical first
   gitto prune [--remove]      list clones whose work is merged, or remove them
+      --stale <days>          include ones untouched that long, archiving their work
   gitto doctor [<name>]       report references pointing outside a clone
   gitto sync                  bring the canonical up to date
   gitto path <name>           print where a clone lives
@@ -63,6 +66,9 @@ USAGE
 }
 
 cloneUnderConstruction=""
+lockedCanonical=""
+lockHeldKind=""
+lockTimeoutSeconds=${GITTO_LOCK_TIMEOUT:-1800}
 
 removePartialClone() {
   [ -n "$cloneUnderConstruction" ] || return 0
@@ -74,8 +80,146 @@ removePartialClone() {
 
 fail() {
   echo "gitto: $1" >&2
-  removePartialClone
+  cleanUpUnfinishedWork
   exit 1
+}
+
+cleanUpUnfinishedWork() {
+  abandonAdoption
+  removePartialClone
+  releaseCanonicalLock
+}
+
+lockDirectoryOf() {
+  echo "$1/.git/gitto-lock"
+}
+
+writeLockHolder() {
+  holderFile="$1"
+  activity="$2"
+  printf 'pid %s\nhost %s\nwhat %s\n' "$$" "$(hostname)" "$activity" > "$holderFile"
+}
+
+describeLockHolder() {
+  holderActivity=$(sed -n 's/^what //p' "$1" 2>/dev/null | head -1)
+  echo "${holderActivity:-another gitto}"
+}
+
+lockHolderIsGone() {
+  holderFile="$1"
+  [ -f "$holderFile" ] || return 0
+  [ "$(sed -n 's/^host //p' "$holderFile" | head -1)" = "$(hostname)" ] || return 1
+  holderProcess=$(sed -n 's/^pid //p' "$holderFile" | head -1)
+  [ -n "$holderProcess" ] || return 0
+  ! kill -0 "$holderProcess" 2>/dev/null
+}
+
+dropAbandonedWriter() {
+  lockPath="$1"
+  [ -d "$lockPath/writer" ] || return 1
+  lockHolderIsGone "$lockPath/writer/holder" || return 1
+  echo "gitto: taking the lock from $(describeLockHolder "$lockPath/writer/holder"), which is no longer running" >&2
+  rm -rf "$lockPath/writer"
+}
+
+dropDepartedReaders() {
+  for markerFile in "$1"/*; do
+    [ -f "$markerFile" ] || continue
+    lockHolderIsGone "$markerFile" && rm -f "$markerFile"
+  done
+}
+
+announceWaiting() {
+  waitedSeconds="$1"
+  [ $((waitedSeconds % 30)) -eq 0 ] || return 0
+  if [ "$waitedSeconds" -eq 0 ]; then
+    echo "waiting for $2"
+  else
+    echo "  still waiting for $2, $waitedSeconds seconds in"
+  fi
+}
+
+giveUpWaiting() {
+  [ "$1" -lt "$lockTimeoutSeconds" ] && return 0
+  fail "waited $1 seconds for $2.
+      finish it, or raise GITTO_LOCK_TIMEOUT to wait longer."
+}
+
+holdCanonicalWithOthers() {
+  canonicalPath="$1"
+  lockPath=$(lockDirectoryOf "$canonicalPath")
+  waitedSeconds=0
+  while :; do
+    mkdir -p "$lockPath/readers"
+    writeLockHolder "$lockPath/readers/$$" "$2"
+    [ -d "$lockPath/writer" ] || break
+    rm -f "$lockPath/readers/$$"
+    dropAbandonedWriter "$lockPath" && continue
+    waitedFor="$(describeLockHolder "$lockPath/writer/holder") in $(basename "$canonicalPath")"
+    announceWaiting "$waitedSeconds" "$waitedFor"
+    sleep 1
+    waitedSeconds=$((waitedSeconds + 1))
+    giveUpWaiting "$waitedSeconds" "$waitedFor"
+  done
+  lockedCanonical="$canonicalPath"
+  lockHeldKind=shared
+  trap 'cleanUpUnfinishedWork' EXIT INT TERM
+}
+
+holdCanonicalAlone() {
+  canonicalPath="$1"
+  lockPath=$(lockDirectoryOf "$canonicalPath")
+  mkdir -p "$lockPath/readers"
+  waitedSeconds=0
+  until mkdir "$lockPath/writer" 2>/dev/null; do
+    dropAbandonedWriter "$lockPath" && continue
+    waitedFor="$(describeLockHolder "$lockPath/writer/holder") in $(basename "$canonicalPath")"
+    announceWaiting "$waitedSeconds" "$waitedFor"
+    sleep 1
+    waitedSeconds=$((waitedSeconds + 1))
+    giveUpWaiting "$waitedSeconds" "$waitedFor"
+  done
+  writeLockHolder "$lockPath/writer/holder" "$2"
+  lockedCanonical="$canonicalPath"
+  lockHeldKind=exclusive
+  trap 'cleanUpUnfinishedWork' EXIT INT TERM
+  waitedSeconds=0
+  while :; do
+    dropDepartedReaders "$lockPath/readers"
+    readerCount=$(ls -A "$lockPath/readers" 2>/dev/null | wc -l | tr -d ' ')
+    [ "$readerCount" -gt 0 ] || return 0
+    waitedFor="$readerCount clones still copying $(basename "$canonicalPath")"
+    announceWaiting "$waitedSeconds" "$waitedFor"
+    sleep 1
+    waitedSeconds=$((waitedSeconds + 1))
+    giveUpWaiting "$waitedSeconds" "$waitedFor"
+  done
+}
+
+releaseCanonicalLock() {
+  [ -n "$lockedCanonical" ] || return 0
+  lockPath=$(lockDirectoryOf "$lockedCanonical")
+  releasedKind="$lockHeldKind"
+  lockedCanonical=""
+  lockHeldKind=""
+  case "$releasedKind" in
+    exclusive) rm -rf "$lockPath/writer" ;;
+    shared) rm -f "$lockPath/readers/$$" ;;
+  esac
+}
+
+readOption() {
+  optionName="$1"
+  shift
+  takeNext=no
+  for argument in "$@"; do
+    [ "$takeNext" = yes ] && { echo "$argument"; return; }
+    case "$argument" in
+      "$optionName") takeNext=yes ;;
+      "$optionName"=*) echo "${argument#*=}"; return ;;
+    esac
+  done
+  echo ""
 }
 
 readFlag() {
@@ -304,6 +448,17 @@ excludeCloneMarker() {
   echo '/.gitto' >> "$clonePath/.git/info/exclude"
 }
 
+reportInheritedStaleness() {
+  clonePath="$1"
+  canonicalPath="$2"
+  baseRevision="$3"
+  canonicalCommit=$(git -C "$canonicalPath" rev-parse HEAD 2>/dev/null) || return 0
+  staleCount=$(git -C "$clonePath" rev-list --count "$canonicalCommit..$baseRevision" 2>/dev/null || echo 0)
+  [ "$staleCount" -gt 0 ] || return 0
+  echo "  the canonical is $staleCount commits behind $baseRevision, so what it had built is that old"
+  echo "  dependencies and build output came from there; 'gitto sync' moves it and runs .gitto-refresh"
+}
+
 reportCarriedChanges() {
   clonePath="$1"
   canonicalPath="$2"
@@ -337,17 +492,18 @@ createClone() {
   clonePath="$canonicalPath-$cloneName"
   [ -e "$clonePath" ] && fail "already exists: $clonePath"
 
+  holdCanonicalWithOthers "$canonicalPath" "gitto new $cloneName"
   cloneKind=$(resolveCloneCommand "$(dirname "$canonicalPath")")
   nestedWorktrees=$(nestedWorktreesOf "$canonicalPath")
   baseRevision=${requestedBase:-$(git -C "$canonicalPath" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)}
 
   echo "cloning $(basename "$canonicalPath") -> $(basename "$clonePath") by $cloneKind"
-  trap 'removePartialClone' EXIT INT TERM
+  trap 'cleanUpUnfinishedWork' EXIT INT TERM
   cloneUnderConstruction="$clonePath"
   freeKilobytesBeforeClone=$(freeKilobytesIn "$(dirname "$canonicalPath")")
   copyTreeCheaply "$cloneKind" "$canonicalPath" "$clonePath"
   freeKilobytesAfterClone=$(freeKilobytesIn "$(dirname "$canonicalPath")")
-  echo "$canonicalPath" > "$clonePath/.gitto"
+  rm -rf "$(lockDirectoryOf "$clonePath")"
 
   detachInheritedWorktrees "$clonePath"
   dropNestedWorktrees "$clonePath" "$nestedWorktrees"
@@ -374,12 +530,16 @@ createClone() {
 
   clonedKilobytes=$((freeKilobytesBeforeClone - freeKilobytesAfterClone))
   [ "$clonedKilobytes" -ge 0 ] || clonedKilobytes=0
-  git -C "$clonePath" config --local gitto.diskKilobytes "$clonedKilobytes"
+  git -C "$clonePath" config --local gitto.diskKilobytesAtCreation "$clonedKilobytes"
+  staleness=$(reportInheritedStaleness "$clonePath" "$canonicalPath" "$baseRevision")
 
+  echo "$canonicalPath" > "$clonePath/.gitto"
   cloneUnderConstruction=""
+  releaseCanonicalLock
   trap - EXIT INT TERM
   reportCarriedChanges "$clonePath" "$canonicalPath" "$baseRevision"
   reportCanonicalReferences "$clonePath" "$canonicalPath" || true
+  [ -z "$staleness" ] || echo "$staleness"
   echo "  branch $branchName on $baseRevision, $(git -C "$clonePath" submodule status --recursive | wc -l | tr -d ' ') submodules, $(humanKilobytes "$clonedKilobytes") of disk"
   echo "$clonePath"
 }
@@ -409,15 +569,50 @@ branchOf() {
 }
 
 dirtyCountOf() {
-  git -C "$1" status --porcelain | wc -l | tr -d ' '
+  statusEverywhere "$1" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' '
 }
 
 unpushedCountOf() {
-  git -C "$1" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' '
+  repositoryPath="$1"
+  {
+    git -C "$repositoryPath" rev-list --count HEAD --not --remotes 2>/dev/null || echo 0
+    git -C "$repositoryPath" submodule foreach --recursive --quiet \
+      'git rev-list --count HEAD --not --remotes 2>/dev/null || echo 0' 2>/dev/null || true
+  } | awk '{ total += $1 } END { print total + 0 }'
 }
 
 diskKilobytesOf() {
-  git -C "$1" config --local --get gitto.diskKilobytes 2>/dev/null || echo ""
+  git -C "$1" config --local --get gitto.diskKilobytesAtCreation 2>/dev/null || echo ""
+}
+
+modifiedEpochOf() {
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+}
+
+lastActivityEpochOf() {
+  clonePath="$1"
+  {
+    git -C "$clonePath" log -1 --format=%ct 2>/dev/null || echo 0
+    modifiedEpochOf "$clonePath/.git/logs/HEAD"
+    modifiedEpochOf "$clonePath"
+  } | sort -rn | head -1
+}
+
+idleSecondsOf() {
+  echo $(( $(date +%s) - $(lastActivityEpochOf "$1") ))
+}
+
+humanAge() {
+  ageSeconds="$1"
+  if [ "$ageSeconds" -ge 86400 ]; then
+    echo "$((ageSeconds / 86400))d"
+  elif [ "$ageSeconds" -ge 3600 ]; then
+    echo "$((ageSeconds / 3600))h"
+  elif [ "$ageSeconds" -ge 60 ]; then
+    echo "$((ageSeconds / 60))m"
+  else
+    echo "${ageSeconds}s"
+  fi
 }
 
 behindCountOf() {
@@ -434,13 +629,21 @@ describeCanonical() {
   return 0
 }
 
+allocatedKilobytesOf() {
+  du -sk "$1" 2>/dev/null | awk '{ print $1 }'
+}
+
 describeClone() {
   clonePath="$1"
+  measuring="$2"
   diskKilobytes=$(diskKilobytesOf "$clonePath")
   [ -n "$diskKilobytes" ] && diskColumn=$(humanKilobytes "$diskKilobytes") || diskColumn="?"
-  printf "%-24s %-22s dirty=%-5s unpushed=%-5s %s\n" \
+  allocatedColumn=""
+  [ "$measuring" = yes ] && allocatedColumn="  allocated=$(humanKilobytes "$(allocatedKilobytesOf "$clonePath")")"
+  printf "%-24s %-22s dirty=%-5s unpushed=%-5s idle=%-6s new=%s%s\n" \
     "$(basename "$clonePath")" "$(branchOf "$clonePath")" \
-    "$(dirtyCountOf "$clonePath")" "$(unpushedCountOf "$clonePath")" "$diskColumn"
+    "$(dirtyCountOf "$clonePath")" "$(unpushedCountOf "$clonePath")" \
+    "$(humanAge "$(idleSecondsOf "$clonePath")")" "$diskColumn" "$allocatedColumn"
 }
 
 shortNameOf() {
@@ -452,19 +655,24 @@ shortNameOf() {
 describeCloneAsJson() {
   clonePath="$1"
   canonicalPath="$2"
+  measuring="$3"
   diskKilobytes=$(diskKilobytesOf "$clonePath")
-  printf '    {"name": "%s", "directory": "%s", "path": "%s", "branch": "%s", "dirty": %s, "unpushed": %s, "diskKilobytes": %s}' \
+  allocatedField=""
+  [ "$measuring" = yes ] && allocatedField=", \"allocatedKilobytes\": $(allocatedKilobytesOf "$clonePath")"
+  printf '    {"name": "%s", "directory": "%s", "path": "%s", "branch": "%s", "dirty": %s, "unpushed": %s, "idleSeconds": %s, "diskKilobytesAtCreation": %s%s}' \
     "$(jsonString "$(shortNameOf "$clonePath" "$canonicalPath")")" \
     "$(jsonString "$(basename "$clonePath")")" "$(jsonString "$clonePath")" \
     "$(jsonString "$(branchOf "$clonePath")")" "$(dirtyCountOf "$clonePath")" \
-    "$(unpushedCountOf "$clonePath")" "${diskKilobytes:-null}"
+    "$(unpushedCountOf "$clonePath")" "$(idleSecondsOf "$clonePath")" \
+    "${diskKilobytes:-null}" "$allocatedField"
 }
 
 listClones() {
   canonicalPath=$(resolveCanonical)
+  measuring=$(readFlag --measure "$@")
   if [ "$(readFlag --json "$@")" = no ]; then
     describeCanonical "$canonicalPath"
-    eachClone "$canonicalPath" | while read -r clonePath; do describeClone "$clonePath"; done
+    eachClone "$canonicalPath" | while read -r clonePath; do describeClone "$clonePath" "$measuring"; done
     return 0
   fi
   printf '{\n  "canonical": {"name": "%s", "path": "%s", "branch": "%s", "behind": %s},\n  "clones": [\n' \
@@ -473,7 +681,7 @@ listClones() {
   separator=""
   eachClone "$canonicalPath" | while read -r clonePath; do
     printf '%b' "$separator"
-    describeCloneAsJson "$clonePath" "$canonicalPath"
+    describeCloneAsJson "$clonePath" "$canonicalPath" "$measuring"
     separator=",\n"
     printf '\n'
   done
@@ -524,20 +732,82 @@ reportHostedWorktrees() {
   done
 }
 
+archiveRootOf() {
+  echo "$1.gitto-archive"
+}
+
+recordUncommittedWork() {
+  repositoryPath="$1"
+  [ "$(git -C "$repositoryPath" status --porcelain --ignore-submodules=dirty | wc -l | tr -d ' ')" -gt 0 ] || return 0
+  git -C "$repositoryPath" add -A >/dev/null 2>&1 || return 1
+  archiveTree=$(git -C "$repositoryPath" write-tree) || return 1
+  archiveCommit=$(
+    GIT_AUTHOR_NAME=gitto GIT_AUTHOR_EMAIL=gitto@localhost \
+    GIT_COMMITTER_NAME=gitto GIT_COMMITTER_EMAIL=gitto@localhost \
+    git -C "$repositoryPath" commit-tree "$archiveTree" -p HEAD -m 'work that was never committed'
+  ) || return 1
+  git -C "$repositoryPath" update-ref refs/gitto-archive/uncommitted "$archiveCommit"
+}
+
+bundleRepositoryInto() {
+  repositoryPath="$1"
+  bundleFile="$2"
+  recordUncommittedWork "$repositoryPath" || return 1
+  git -C "$repositoryPath" bundle create "$bundleFile" --all >/dev/null 2>&1 || return 1
+  git -C "$repositoryPath" bundle verify "$bundleFile" >/dev/null 2>&1
+}
+
+archiveClone() {
+  clonePath="$1"
+  cloneName="$2"
+  canonicalPath="$3"
+  archivePath="$(archiveRootOf "$canonicalPath")/$cloneName-$(date -u +%Y%m%d-%H%M%S)"
+  mkdir -p "$archivePath"
+  bundleRepositoryInto "$clonePath" "$archivePath/superproject.bundle" \
+    || fail "could not bundle $cloneName, so it is still there. what was written is in $archivePath"
+  printf '%s\t%s\t%s\t%s\n' . superproject.bundle "$(branchOf "$clonePath")" \
+    "$(git -C "$clonePath" rev-parse HEAD)" > "$archivePath/manifest"
+  submoduleList=$(mktemp)
+  git -C "$clonePath" submodule foreach --recursive --quiet 'echo "$displaypath"' > "$submoduleList" 2>/dev/null || true
+  while IFS= read -r submodulePath; do
+    [ -n "$submodulePath" ] || continue
+    bundleName="$(echo "$submodulePath" | tr '/' '-').bundle"
+    bundleRepositoryInto "$clonePath/$submodulePath" "$archivePath/$bundleName" \
+      || fail "could not bundle the submodule $submodulePath of $cloneName, so it is still there. what was written is in $archivePath"
+    printf '%s\t%s\t%s\t%s\n' "$submodulePath" "$bundleName" "$(branchOf "$clonePath/$submodulePath")" \
+      "$(git -C "$clonePath/$submodulePath" rev-parse HEAD)" >> "$archivePath/manifest"
+  done < "$submoduleList"
+  rm -f "$submoduleList"
+  echo "$archivePath"
+}
+
 removeClone() {
-  [ $# -ge 1 ] || printUsage
+  cloneName=$(withoutFlags "$@" | head -1)
+  [ -n "$cloneName" ] || printUsage
+  archiving=$(readFlag --archive "$@")
   canonicalPath=$(resolveCanonical)
-  clonePath="$canonicalPath-$1"
+  clonePath="$canonicalPath-$cloneName"
   [ -f "$clonePath/.gitto" ] || fail "not a gitto: $clonePath"
 
-  dirtyCount=$(git -C "$clonePath" status --porcelain | wc -l | tr -d ' ')
-  [ "$dirtyCount" -eq 0 ] || fail "$1 holds $dirtyCount uncommitted changes"
-  unpushedCount=$(git -C "$clonePath" log --oneline '@{upstream}..HEAD' 2>/dev/null | wc -l | tr -d ' ')
-  [ "$unpushedCount" -eq 0 ] || fail "$1 holds $unpushedCount commits no remote has"
   hostedElsewhere=$(worktreesHostedOutside "$clonePath")
-  [ -z "$hostedElsewhere" ] || fail "$1 hosts the history of worktrees that live outside it:
+  [ -z "$hostedElsewhere" ] || fail "$cloneName hosts the history of worktrees that live outside it:
 $(echo "$hostedElsewhere" | sed 's/^/        /')
       removing it would leave each of them without a repository."
+
+  if [ "$archiving" = yes ]; then
+    archivePath=$(archiveClone "$clonePath" "$cloneName" "$canonicalPath")
+    rm -rf "$clonePath"
+    echo "removed $(basename "$clonePath"), and what it held is in $archivePath"
+    return 0
+  fi
+
+  dirtyCount=$(dirtyCountOf "$clonePath")
+  [ "$dirtyCount" -eq 0 ] || fail "$cloneName holds $dirtyCount uncommitted changes:
+$(statusEverywhere "$clonePath" | head -5 | sed 's/^/        /')
+      commit them, or keep them with 'gitto remove $cloneName --archive'."
+  unpushedCount=$(unpushedCountOf "$clonePath")
+  [ "$unpushedCount" -eq 0 ] || fail "$cloneName holds $unpushedCount commits no remote has, in it or in a submodule.
+      push them, or keep them with 'gitto remove $cloneName --archive'."
 
   rm -rf "$clonePath"
   echo "removed $(basename "$clonePath")"
@@ -579,18 +849,36 @@ mergedIntoUpstream() {
 pruneClones() {
   canonicalPath=$(resolveCanonical)
   removing=$(readFlag --remove "$@")
+  staleDays=$(readOption --stale "$@")
+  case "$staleDays" in
+    '') ;;
+    *[!0-9]*) fail "--stale takes a number of days" ;;
+  esac
   found=no
   for clonePath in $(eachClone "$canonicalPath"); do
-    [ "$(dirtyCountOf "$clonePath")" -eq 0 ] || continue
-    [ "$(unpushedCountOf "$clonePath")" -eq 0 ] || continue
     [ -z "$(worktreesHostedOutside "$clonePath")" ] || continue
-    mergedIntoUpstream "$clonePath" "$canonicalPath" || continue
+    cloneName=$(shortNameOf "$clonePath" "$canonicalPath")
+    idleSeconds=$(idleSecondsOf "$clonePath")
+    holdsWork=no
+    if [ "$(dirtyCountOf "$clonePath")" -eq 0 ] && [ "$(unpushedCountOf "$clonePath")" -eq 0 ] \
+      && mergedIntoUpstream "$clonePath" "$canonicalPath"; then
+      reason="merged, nothing to lose"
+    elif [ -n "$staleDays" ] && [ "$idleSeconds" -ge $((${staleDays:-0} * 86400)) ]; then
+      reason="untouched for $(humanAge "$idleSeconds"), and it still holds work"
+      holdsWork=yes
+    else
+      continue
+    fi
     found=yes
-    if [ "$removing" = yes ]; then
+    if [ "$removing" = no ]; then
+      echo "$(basename "$clonePath")  $(branchOf "$clonePath")  $reason"
+    elif [ "$holdsWork" = yes ]; then
+      archivePath=$(archiveClone "$clonePath" "$cloneName" "$canonicalPath")
+      rm -rf "$clonePath"
+      echo "removed $(basename "$clonePath"), and what it held is in $archivePath"
+    else
       rm -rf "$clonePath"
       echo "removed $(basename "$clonePath")"
-    else
-      echo "$(basename "$clonePath")  $(branchOf "$clonePath")  merged, nothing to lose"
     fi
   done
   [ "$found" = yes ] || { echo "nothing to prune"; return 0; }
@@ -600,6 +888,7 @@ pruneClones() {
 syncCanonical() {
   canonicalPath=$(resolveCanonical)
   requireIndependentCheckout "$canonicalPath"
+  holdCanonicalAlone "$canonicalPath" "gitto sync"
   git -C "$canonicalPath" fetch --quiet origin || fail "the canonical has no origin to fetch from"
   behindCount=$(behindCountOf "$canonicalPath")
   if [ "$behindCount" -eq 0 ]; then
@@ -612,12 +901,13 @@ syncCanonical() {
     git -C "$canonicalPath" submodule update --quiet --init --recursive
     echo "canonical $(basename "$canonicalPath") moved $behindCount commits forward"
   fi
-  [ -f "$canonicalPath/.gitto-refresh" ] || {
+  if [ -f "$canonicalPath/.gitto-refresh" ]; then
+    echo "  running .gitto-refresh"
+    ( cd "$canonicalPath" && sh .gitto-refresh ) || fail ".gitto-refresh failed, so the canonical is not ready to clone from"
+  else
     echo "  a .gitto-refresh script in the canonical would rebuild what a clone inherits"
-    return 0
-  }
-  echo "  running .gitto-refresh"
-  ( cd "$canonicalPath" && sh .gitto-refresh ) || fail ".gitto-refresh failed, so the canonical is not ready to clone from"
+  fi
+  releaseCanonicalLock
 }
 
 printClonePath() {
@@ -630,9 +920,9 @@ printClonePath() {
 
 statusEverywhere() {
   repositoryPath="$1"
-  git -C "$repositoryPath" status --porcelain 2>/dev/null
+  git -C "$repositoryPath" status --porcelain --ignore-submodules=dirty 2>/dev/null
   git -C "$repositoryPath" submodule foreach --recursive --quiet \
-    'git status --porcelain | sed "s|^|$displaypath |"' 2>/dev/null || true
+    'git status --porcelain --ignore-submodules=dirty | sed "s|^|$displaypath |"' 2>/dev/null || true
 }
 
 recordSubmoduleHeads() {
@@ -722,9 +1012,12 @@ adoptWorktree() {
 
   stagedGitDirectory="$targetPath/.git.gitto-adopting"
   [ -e "$stagedGitDirectory" ] && fail "something is already at $stagedGitDirectory"
+  holdCanonicalWithOthers "$canonicalPath" "gitto adopt"
   freeKilobytesBeforeCopy=$(freeKilobytesIn "$targetPath")
   copyGitDirectory "$canonicalPath/.git" "$stagedGitDirectory"
   freeKilobytesAfterCopy=$(freeKilobytesIn "$targetPath")
+  releaseCanonicalLock
+  rm -rf "$stagedGitDirectory/gitto-lock"
   rm -rf "$stagedGitDirectory/worktrees"
   git --git-dir="$stagedGitDirectory" config --unset core.worktree 2>/dev/null || true
   git --git-dir="$stagedGitDirectory" config core.bare false
@@ -732,7 +1025,7 @@ adoptWorktree() {
   rm -f "$targetPath/.git"
   mv "$stagedGitDirectory" "$targetPath/.git"
   adoptionUnderway="$targetPath"
-  trap 'abandonAdoption' EXIT INT TERM
+  trap 'cleanUpUnfinishedWork' EXIT INT TERM
 
   git -C "$targetPath" fetch --quiet "$hostPath" '+refs/heads/*:refs/gitto-adopted/*' 2>/dev/null || true
   restoreHeadWithoutTouchingFiles "$targetPath" "$headCommit" "$branchName"
@@ -767,7 +1060,7 @@ adoptWorktree() {
   discardAdoptionScaffolding "$targetPath"
   adoptedKilobytes=$((freeKilobytesBeforeCopy - freeKilobytesAfterCopy))
   [ "$adoptedKilobytes" -ge 0 ] || adoptedKilobytes=0
-  git -C "$targetPath" config --local gitto.diskKilobytes "$adoptedKilobytes"
+  git -C "$targetPath" config --local gitto.diskKilobytesAtCreation "$adoptedKilobytes"
   rm -f "$adoptionRecordFile"
 
   echo "  history now lives in $(basename "$targetPath")/.git, copied from the canonical"

@@ -35,8 +35,10 @@ Do not reach for it to read a different revision. `git show`, `git diff` and
 ## Commands
 
     gitto new <name> [<base>]   make a clone of the canonical checkout
-    gitto list                  show every clone beside the canonical
+    gitto list [--measure]      show every clone, how idle it is, what it cost
     gitto remove <name>         remove a clone holding nothing unpushed
+    gitto prune [--stale <days>] [--remove]
+                                drop the lanes nobody came back to
     gitto doctor [<name>]       report what points outside a clone, and what it hosts
 
 `<base>` defaults to `origin/HEAD`, and submodules move to the pointers it
@@ -59,6 +61,31 @@ safety check.
 
 `gitto new` prints what it carried from the canonical. When that line names
 commits or files you did not expect, the canonical is where to fix it.
+
+## Removing one that still holds work
+
+`remove` and `prune` read the submodules as well as the checkout. A commit made
+inside a submodule and pushed nowhere leaves `git status` clean at the top level
+once its pointer is committed, and it is the only copy of that work, so it stops
+the removal.
+
+`remove <name> --archive` takes such a clone anyway. It bundles the checkout and
+every submodule into `<canonical>.gitto-archive/<name>-<timestamp>`, commits what
+was never committed onto `refs/gitto-archive/uncommitted` so the bundle carries
+it, and reads every bundle back with `git bundle verify` before deleting
+anything. A bundle that does not verify leaves the clone where it was. The
+archive holds what git tracks, so ignored build output is not in it.
+
+`prune --stale <days>` is the same for lanes nobody came back to, and with
+`--remove` it archives the ones that still hold work.
+
+## Several at once
+
+A clone reads the canonical while it copies and `sync` writes to it, so both take
+a lock the canonical carries. Any number of clones can be taken at once; a clone
+taken during a `sync` waits for it. A lock whose holder is no longer running is
+taken, with a line saying so, and `GITTO_LOCK_TIMEOUT` is how long a run waits
+before it gives up.
 
 ## What it refuses, and why
 

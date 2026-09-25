@@ -210,13 +210,16 @@ namesABranchOfItsOwn() {
 recordsWhatTheCloneCost() {
   canonical=$(makeCanonical costing)
   runIn "$canonical" new lane >/dev/null 2>&1
-  recorded=$(git -C "$canonical-lane" config --local --get gitto.diskKilobytes)
+  recorded=$(git -C "$canonical-lane" config --local --get gitto.diskKilobytesAtCreation)
   case "$recorded" in
     ''|*[!0-9]*) report fail 'a clone records what it cost' "got: $recorded" ;;
     *) report pass 'a clone records what it cost' ;;
   esac
   listing=$(runIn "$canonical" list 2>&1)
-  expectContains 'and the listing shows it' "$listing" 'KB'
+  expectContains 'and the listing shows what it cost when new' "$listing" 'new='
+  expectContains 'alongside how long it has been idle' "$listing" 'idle='
+  measured=$(runIn "$canonical" list --measure 2>&1)
+  expectContains 'and --measure says what it allocates now' "$measured" 'allocated='
 }
 
 emitsMachineReadableListing() {
@@ -233,7 +236,8 @@ emitsMachineReadableListing() {
   expectContains 'the listing names the canonical' "$output" '"canonical"'
   expectContains 'and carries the short name remove takes' "$output" '"name": "first"'
   expectContains 'and the second one too' "$output" '"name": "second"'
-  expectContains 'and what the copy cost' "$output" '"diskKilobytes"'
+  expectContains 'and what the copy cost when new' "$output" '"diskKilobytesAtCreation"'
+  expectContains 'and how long it has been idle' "$output" '"idleSeconds"'
 }
 
 reportsAStaleCanonical() {
@@ -442,7 +446,7 @@ recordsWhatAdoptionCost() {
   runIn "$canonical-taken" adopt "$canonical" >/dev/null
 
   listing=$(runIn "$canonical" list --json)
-  expectMissing 'an adopted clone carries a disk figure' "$listing" '"diskKilobytes": null'
+  expectMissing 'an adopted clone carries a disk figure' "$listing" '"diskKilobytesAtCreation": null'
   expectContains 'and the clone is in the listing' "$listing" '"name": "taken"'
 }
 
@@ -601,6 +605,123 @@ seesAWorktreeHostedAtSubmoduleDepth() {
   expectContains 'a worktree a submodule registers is named too' "$diagnosis" "$root/deepleaf"
 }
 
+refusesToLoseWorkInsideASubmodule() {
+  root="$laboratory/submodulework"
+  mkdir -p "$root"
+  makeRepository "$root/dependency"
+  makeRepository "$root/source"
+  git -C "$root/source" submodule add -q "$root/dependency" vendor/dependency
+  git -C "$root/source" commit -qm submodule
+  git clone -q --bare "$root/source" "$root/origin" 2>/dev/null
+  git clone -q "$root/origin" "$root/canonical" 2>/dev/null
+  canonical="$root/canonical"
+  git -C "$canonical" submodule update -q --init --recursive
+  runIn "$canonical" new lane >/dev/null 2>&1
+
+  printf 'scratch\n' > "$canonical-lane/vendor/dependency/scratch.txt"
+  refusal=$( ( cd "$canonical" && "$gitto" remove lane 2>&1 ) || true )
+  expectContains 'untracked work inside a submodule is seen' "$refusal" 'uncommitted changes'
+  expectContains 'and the refusal names where it is' "$refusal" 'vendor/dependency'
+  rm -f "$canonical-lane/vendor/dependency/scratch.txt"
+
+  printf 'work\n' > "$canonical-lane/vendor/dependency/file.txt"
+  git -C "$canonical-lane/vendor/dependency" commit -qam 'only this clone has it'
+  git -C "$canonical-lane" add vendor/dependency
+  git -C "$canonical-lane" commit -qm 'bump the pointer'
+  git -C "$canonical-lane" push -q origin lane
+
+  refusal=$( ( cd "$canonical" && "$gitto" remove lane 2>&1 ) || true )
+  expectContains 'a submodule commit no remote has stops the removal' "$refusal" 'no remote has'
+  expectPath 'so the clone is still there' "$canonical-lane/.gitto"
+}
+
+refusesToLoseWorkOnABranchWithNoUpstream() {
+  canonical=$(makeCanonical noupstream)
+  runIn "$canonical" new lane HEAD >/dev/null 2>&1
+  printf 'work\n' > "$canonical-lane/second.txt"
+  git -C "$canonical-lane" add -A && git -C "$canonical-lane" commit -qm second
+
+  refusal=$( ( cd "$canonical" && "$gitto" remove lane 2>&1 ) || true )
+  expectContains 'a commit no remote has is refused without an upstream to compare' "$refusal" 'no remote has'
+  expectPath 'and the clone survives' "$canonical-lane/.gitto"
+}
+
+keepsWhatItArchives() {
+  canonical=$(makeCanonical archiving)
+  runIn "$canonical" new lane >/dev/null 2>&1
+  printf 'edited\n' > "$canonical-lane/file.txt"
+  printf 'never committed\n' > "$canonical-lane/untracked.txt"
+
+  output=$( ( cd "$canonical" && "$gitto" remove lane --archive 2>&1 ) )
+  expectNoPath 'the clone is gone' "$canonical-lane"
+  archive=$(printf '%s' "$output" | sed -n 's/.*is in //p')
+  expectPath 'and a bundle stands where it said' "$archive/superproject.bundle"
+  expectPath 'beside a manifest of what it holds' "$archive/manifest"
+
+  restored="$laboratory/restored"
+  git init -q "$restored"
+  git -C "$restored" fetch -q "$archive/superproject.bundle" 'refs/gitto-archive/*:refs/gitto-archive/*' 2>/dev/null
+  expectContains 'the edit nobody committed is in it' \
+    "$(git -C "$restored" show refs/gitto-archive/uncommitted:file.txt 2>&1)" 'edited'
+  expectContains 'and so is the file nobody tracked' \
+    "$(git -C "$restored" show refs/gitto-archive/uncommitted:untracked.txt 2>&1)" 'never committed'
+}
+
+prunesWhatNobodyTouched() {
+  canonical=$(makeCanonical staleprune)
+  runIn "$canonical" new idle >/dev/null 2>&1
+  printf 'work\n' > "$canonical-idle/file.txt"
+  GIT_AUTHOR_DATE='2020-01-01T00:00:00' GIT_COMMITTER_DATE='2020-01-01T00:00:00' \
+    git -C "$canonical-idle" commit -qam work
+  touch -t 202001010000 "$canonical-idle/.git/logs/HEAD" "$canonical-idle"
+
+  plain=$(runIn "$canonical" prune 2>&1)
+  expectContains 'prune alone leaves a clone holding work' "$plain" 'nothing to prune'
+  preview=$(runIn "$canonical" prune --stale 7 2>&1)
+  expectContains 'and --stale names the one nobody touched' "$preview" 'untouched for'
+  expectPath 'without deleting it' "$canonical-idle/.gitto"
+
+  runIn "$canonical" prune --stale 7 --remove >/dev/null 2>&1
+  expectNoPath 'which --remove then takes' "$canonical-idle"
+  expectPath 'after bundling what it held' "$(ls -d "$canonical.gitto-archive"/idle-* | head -1)/superproject.bundle"
+}
+
+waitsForWhoeverHoldsTheCanonical() {
+  canonical=$(makeCanonical busy)
+  mkdir -p "$canonical/.git/gitto-lock/writer"
+  printf 'pid %s\nhost %s\nwhat gitto sync\n' "$$" "$(hostname)" \
+    > "$canonical/.git/gitto-lock/writer/holder"
+
+  refusal=$( ( cd "$canonical" && GITTO_LOCK_TIMEOUT=1 "$gitto" new lane 2>&1 ) || true )
+  expectContains 'a clone waits for the run that holds the canonical' "$refusal" 'gitto sync'
+  expectContains 'and says how long it waited' "$refusal" 'waited'
+  expectNoPath 'and copies nothing meanwhile' "$canonical-lane"
+}
+
+takesALockNobodyIsHolding() {
+  canonical=$(makeCanonical abandoned)
+  mkdir -p "$canonical/.git/gitto-lock/writer"
+  printf 'pid 999999\nhost %s\nwhat gitto sync\n' "$(hostname)" \
+    > "$canonical/.git/gitto-lock/writer/holder"
+
+  output=$(runIn "$canonical" new lane 2>&1)
+  expectContains 'a lock whose holder died is taken' "$output" 'no longer running'
+  expectPath 'and the clone is made' "$canonical-lane/.gitto"
+  expectNoPath 'and the clone carries no lock of its own' "$canonical-lane/.git/gitto-lock"
+}
+
+saysWhatTheCanonicalIsBehind() {
+  canonical=$(makeCanonical behindclone)
+  printf 'two\n' > "$canonical/file.txt"
+  git -C "$canonical" commit -qam second
+  git -C "$canonical" push -q origin main
+  git -C "$canonical" reset -q --hard HEAD~1
+
+  output=$(runIn "$canonical" new lane 2>&1)
+  expectContains 'a clone says how stale what it inherited is' "$output" 'commits behind'
+  expectContains 'and what to run about it' "$output" 'gitto sync'
+}
+
 for testName in \
   carriesUntrackedState \
   resolvesNestedSubmodules \
@@ -608,6 +729,13 @@ for testName in \
   dropsNestedWorktrees \
   refusesToOrphanWorktrees \
   refusesToLoseWork \
+  refusesToLoseWorkInsideASubmodule \
+  refusesToLoseWorkOnABranchWithNoUpstream \
+  keepsWhatItArchives \
+  prunesWhatNobodyTouched \
+  waitsForWhoeverHoldsTheCanonical \
+  takesALockNobodyIsHolding \
+  saysWhatTheCanonicalIsBehind \
   makesSiblingsFromInsideAClone \
   namesABranchOfItsOwn \
   recordsWhatTheCloneCost \
