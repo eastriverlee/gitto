@@ -37,7 +37,7 @@ Do not reach for it to read a different revision. `git show`, `git diff` and
     gitto new <name> [<base>]   make a clone of the canonical checkout
     gitto list                  show every clone beside the canonical
     gitto remove <name>         remove a clone holding nothing unpushed
-    gitto doctor [<name>]       report references pointing outside a clone
+    gitto doctor [<name>]       report what points outside a clone, and what it hosts
 
 `<base>` defaults to `origin/HEAD`, and submodules move to the pointers it
 records. Pass `HEAD` to branch where the canonical stands, carrying its
@@ -91,6 +91,19 @@ a worktree: untracked work inside a submodule never appears in `git ls-files
 `doctor` reports references that point outside a clone: git configuration,
 symlinks, virtualenv activation scripts, submodule git directories that escaped,
 and worktrees the clone hosts.
+
+Given no name it reports the canonical as well. A canonical hosts worktrees like
+any other checkout, and it is the one nobody checks before renaming it. For each
+hosted worktree, at the top level and at every submodule depth, it holds the
+registration against that worktree's own `gitdir` marker and says when the two
+disagree. A marker carries an absolute path, so renaming a checkout frees that
+address for whatever moves in next, and the marker goes on resolving to a
+repository that never registered it.
+
+Never read such a worktree's state from output alone. `git status` inside one
+fails with `not a git repository`. The exit status says so; a count of output
+lines reports a clean tree. Run `doctor` before renaming, retiring or deleting
+any checkout.
 
 It reports what git can see. Nothing in git records that a shell has its cwd
 inside a directory, that `~/.ssh/config` runs a script from one, or that a

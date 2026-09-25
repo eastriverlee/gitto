@@ -80,7 +80,7 @@ gitto list [--json]                             show every clone and its cost
 gitto sync                                      bring the canonical up to date
 gitto prune [--remove]                          drop the clones whose work landed
 gitto remove <name>                             remove one that holds nothing
-gitto doctor [<name>] [--json]                  report what points outside a clone
+gitto doctor [<name>] [--json]                  report what points outside a clone, and what it hosts
 gitto path <name>                               print where a clone lives
 gitto adopt <canonical>                         re-point a clone at a moved canonical
 gitto shell-init                                emit the shell function
@@ -112,6 +112,10 @@ bash and zsh.
 Submodules survive a whole-directory copy because their `.git` files address
 their parent by a relative path. Three levels of nesting follow a copy intact.
 A worktree's submodule addresses the host repository absolutely, and does not.
+
+With no name, `doctor` reports the canonical alongside the clones, and holds
+every worktree a checkout hosts against that worktree's own marker. Renaming a
+checkout frees the address its markers carry, so run it before moving one.
 
 `doctor` reports what git can see. Nothing in git records that a shell has its
 cwd inside a directory, that `~/.ssh/config` runs a script from one, or that a
