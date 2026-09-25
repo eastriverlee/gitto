@@ -722,6 +722,21 @@ saysWhatTheCanonicalIsBehind() {
   expectContains 'and what to run about it' "$output" 'gitto sync'
 }
 
+everyCommandIsWrittenDown() {
+  repository=$(cd "$(dirname "$0")/.." && pwd)
+  usage=$("$gitto" 2>&1 || true)
+  commandNames=$(printf '%s\n' "$usage" | sed -n 's/^  gitto \([a-z-]*\).*/\1/p' | sort -u)
+  missingFromReadme=""
+  missingFromReference=""
+  for commandName in $commandNames; do
+    grep -q "gitto $commandName" "$repository/README.md" || missingFromReadme="$missingFromReadme $commandName"
+    grep -q "^## $commandName$" "$repository/DOCS.md" || missingFromReference="$missingFromReference $commandName"
+  done
+  expectEqual 'the usage names commands at all' yes "$([ -n "$commandNames" ] && echo yes || echo no)"
+  expectEqual 'every command it prints is in the README' '' "$missingFromReadme"
+  expectEqual 'and every one has a page in the reference' '' "$missingFromReference"
+}
+
 for testName in \
   carriesUntrackedState \
   resolvesNestedSubmodules \
@@ -752,6 +767,7 @@ for testName in \
   reportsPlantedReferences \
   refusesWhenBlocksCannotBeShared \
   everyManifestAgreesOnTheVersion \
+  everyCommandIsWrittenDown \
   keepsItsMarkerOutOfTheWay \
   adoptsAWorktreeInPlace \
   readsSettingsGitCannotSee \

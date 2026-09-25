@@ -1,6 +1,6 @@
 # gitto
 
-Copy a whole working directory, dependencies and build output included.
+A second checkout of the repository you are working in, whatever it weighs.
 
 ```
 $ gitto new auth-fix
@@ -12,10 +12,25 @@ $ cd ../storefront-auth-fix && ls
 node_modules/  vendor/  build/  src/  ...
 ```
 
-A 13 GB checkout in 21 seconds, for 60 MB of real disk. Submodules at every
-depth, dependencies and build output all present, nothing to install.
+`gitto` copies the working directory itself, with the clone call the filesystem
+already has. Nothing is duplicated until one side writes, so what a copy costs
+is a walk over the directory entries and the blocks you go on to change. Size
+does not decide the time.
 
-## The problem
+Measured on a 13 GB checkout with four submodules: 21 seconds, and 60 MB of
+disk that was not shared.
+
+[Docs](https://gitto.13e7.co/docs) ·
+[Comparison](https://gitto.13e7.co/docs/comparison) ·
+[Commands](https://gitto.13e7.co/docs/commands)
+
+## Install
+
+```sh
+curl -fsSL https://gitto.13e7.co/install | sh
+```
+
+## What a second checkout usually costs
 
 `git clone` copies history. `git worktree` shares history and gives you a
 second checkout of the tracked files. Both leave behind everything git does not
@@ -28,13 +43,7 @@ where those files are: git's worktree registry, submodule git directories,
 you get a directory that still points at the original, quietly running its
 hooks and reading its configuration.
 
-`gitto` copies the whole directory for free, then repoints what the move broke.
-
-## Install
-
-```sh
-curl -fsSL https://gitto.13e7.co/install | sh
-```
+That second half is the work. Copying is one line.
 
 ## Plugin
 
@@ -57,20 +66,6 @@ codex plugin add gitto@13e7
 ```
 
 Either one then installs the command with `/gitto:install`.
-
-## From source
-
-```sh
-git clone https://github.com/eastriverlee/gitto
-sh gitto/plugins/gitto/skills/gitto/scripts/install.sh
-```
-
-The suite builds a repository for each case and runs the real script against
-it, including a disk image without block sharing.
-
-```sh
-sh gitto/tests/run
-```
 
 ## Commands
 
@@ -98,7 +93,6 @@ A command cannot change the directory of the shell that started it, so moving
 into a new clone needs a function. It also adds `gitto cd` and completions for
 bash and zsh.
 
-
 ## Several at once
 
 Copying reads the canonical and `sync` writes to it, so both announce themselves
@@ -112,9 +106,6 @@ submodules: a commit made inside one and pushed nowhere stops the removal, where
 `prune --stale <days>` take one anyway, bundling the checkout and every
 submodule beside the canonical and reading each bundle back before anything is
 deleted.
-
-[How it compares](https://gitto.13e7.co/docs/comparison) to worktree managers
-and to the other whole-tree copies.
 
 ## What it repairs
 
@@ -159,6 +150,20 @@ writes a 32 MB probe, copies it, and reads how much free space the copy
 consumed. macOS `cp -c` falls back to a full byte copy where clonefile is
 unavailable and still exits zero, so a probe that only checks the exit status
 reports a clone that never happened.
+
+## From source
+
+```sh
+git clone https://github.com/eastriverlee/gitto
+sh gitto/plugins/gitto/skills/gitto/scripts/install.sh
+```
+
+The test suite builds a repository for each case and runs the real script
+against it, including one on a disk image that cannot share blocks.
+
+```sh
+sh gitto/tests/run
+```
 
 ## Name
 

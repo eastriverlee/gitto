@@ -1,6 +1,6 @@
 # Overview
 
-Copy a whole working directory, dependencies and build output included.
+A second checkout of the repository you are working in, whatever it weighs.
 
 ## Why it exists
 
