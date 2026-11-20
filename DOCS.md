@@ -217,6 +217,11 @@ search-ranking    feat/search        dirty=3     unpushed=2   idle=6d    new=210
 submodule that no remote has is in the number that decides whether the clone can
 go.
 
+`unpushed` is judged against what the canonical's remote holds now, because a
+clone's own view of its remote is only as fresh as its last fetch. A commit whose
+change already landed on the upstream's default branch under another id, squashed
+with its neighbours or rewritten with the history, is not counted.
+
 ### What the disk figures mean
 
 `new=` is what the copy consumed at the moment it was made, measured as the free

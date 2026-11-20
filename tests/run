@@ -646,6 +646,63 @@ refusesToLoseWorkOnABranchWithNoUpstream() {
   expectPath 'and the clone survives' "$canonical-lane/.gitto"
 }
 
+forgetsWorkThatLandedSquashed() {
+  canonical=$(makeCanonical squashing)
+  root=$(dirname "$canonical")
+  runIn "$canonical" new lane >/dev/null 2>&1
+  printf 'one\nfirst half\n' > "$canonical-lane/file.txt"
+  git -C "$canonical-lane" commit -qam 'first half'
+  printf 'one\nfirst half\nsecond half\n' > "$canonical-lane/file.txt"
+  git -C "$canonical-lane" commit -qam 'second half'
+  git clone -q "$root/origin" "$root/merger" 2>/dev/null
+  cp "$canonical-lane/file.txt" "$root/merger/file.txt"
+  git -C "$root/merger" commit -qam 'both halves, squashed'
+  git -C "$root/merger" push -q origin main
+  git -C "$canonical" pull -q
+
+  listing=$(runIn "$canonical" list 2>&1)
+  expectContains 'a clone whose change landed squashed counts nothing unpushed' "$listing" 'unpushed=0'
+  preview=$(runIn "$canonical" prune 2>&1)
+  expectContains 'and prune calls it merged' "$preview" 'merged'
+  runIn "$canonical" remove lane >/dev/null 2>&1 || true
+  expectNoPath 'so it is removed without --archive' "$canonical-lane"
+}
+
+forgetsWorkThatHistoryRewrote() {
+  canonical=$(makeCanonical rewriting)
+  root=$(dirname "$canonical")
+  runIn "$canonical" new lane >/dev/null 2>&1
+  printf 'one\nlanded\n' > "$canonical-lane/file.txt"
+  git -C "$canonical-lane" commit -qam 'landed before the rewrite'
+  git -C "$canonical-lane" push -q origin HEAD:main
+  git clone -q "$root/origin" "$root/rewriter" 2>/dev/null
+  git -C "$root/rewriter" commit -q --amend -m 'the same change, rewritten'
+  git -C "$root/rewriter" push -q --force origin main
+  git -C "$canonical-lane" fetch -q origin
+  git -C "$canonical" fetch -q origin
+
+  refusal=$( ( cd "$canonical" && "$gitto" remove lane 2>&1 ) || true )
+  expectMissing 'a commit main holds under a rewritten id is not work to lose' "$refusal" 'no remote has'
+  expectNoPath 'so the clone is removed' "$canonical-lane"
+}
+
+stillRefusesWorkUpstreamLacks() {
+  canonical=$(makeCanonical stilllosing)
+  root=$(dirname "$canonical")
+  runIn "$canonical" new lane >/dev/null 2>&1
+  printf 'one\nonly here\n' > "$canonical-lane/file.txt"
+  git -C "$canonical-lane" commit -qam 'only this clone has it'
+  git clone -q "$root/origin" "$root/other" 2>/dev/null
+  printf 'one\nsomething else\n' > "$root/other/file.txt"
+  git -C "$root/other" commit -qam 'unrelated work'
+  git -C "$root/other" push -q origin main
+  git -C "$canonical" pull -q
+
+  refusal=$( ( cd "$canonical" && "$gitto" remove lane 2>&1 ) || true )
+  expectContains 'a change upstream does not hold is still refused' "$refusal" 'holds 1 commits no remote has'
+  expectPath 'and the clone survives' "$canonical-lane/.gitto"
+}
+
 keepsWhatItArchives() {
   canonical=$(makeCanonical archiving)
   runIn "$canonical" new lane >/dev/null 2>&1
@@ -746,6 +803,9 @@ for testName in \
   refusesToLoseWork \
   refusesToLoseWorkInsideASubmodule \
   refusesToLoseWorkOnABranchWithNoUpstream \
+  forgetsWorkThatLandedSquashed \
+  forgetsWorkThatHistoryRewrote \
+  stillRefusesWorkUpstreamLacks \
   keepsWhatItArchives \
   prunesWhatNobodyTouched \
   waitsForWhoeverHoldsTheCanonical \

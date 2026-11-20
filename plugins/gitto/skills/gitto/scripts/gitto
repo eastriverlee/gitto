@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-gittoVersion=0.5.0
+gittoVersion=0.5.1
 
 updateInstalledScript() {
   runningScript=$0
@@ -573,12 +573,71 @@ dirtyCountOf() {
 }
 
 unpushedCountOf() {
-  repositoryPath="$1"
+  countedPath="$1"
+  countedUpstreamPath="${2:-}"
   {
-    git -C "$repositoryPath" rev-list --count HEAD --not --remotes 2>/dev/null || echo 0
-    git -C "$repositoryPath" submodule foreach --recursive --quiet \
-      'git rev-list --count HEAD --not --remotes 2>/dev/null || echo 0' 2>/dev/null || true
-  } | awk '{ total += $1 } END { print total + 0 }'
+    commitsUpstreamLacks "$countedPath" "$countedUpstreamPath"
+    git -C "$countedPath" submodule foreach --recursive --quiet 'echo "$displaypath"' 2>/dev/null \
+      | while IFS= read -r submodulePath; do
+          [ -n "$submodulePath" ] || continue
+          commitsUpstreamLacks "$countedPath/$submodulePath" "${countedUpstreamPath:+$countedUpstreamPath/$submodulePath}"
+        done
+  } | sed '/^$/d' | wc -l | tr -d ' '
+}
+
+commitsUpstreamLacks() {
+  repositoryPath="$1"
+  upstreamPath="$2"
+  candidates=$(git -C "$repositoryPath" rev-list HEAD --not --remotes 2>/dev/null) || return 0
+  [ -n "$candidates" ] || return 0
+  if ! refreshUpstreamIn "$repositoryPath" "$upstreamPath"; then
+    printf '%s\n' "$candidates"
+    return 0
+  fi
+  candidates=$(git -C "$repositoryPath" rev-list HEAD --not --remotes --glob='refs/gitto/upstream/*' 2>/dev/null)
+  changesMissingFrom "$repositoryPath" "$(upstreamDefaultIn "$repositoryPath" "$upstreamPath")" "$candidates"
+}
+
+refreshUpstreamIn() {
+  repositoryPath="$1"
+  upstreamPath="$2"
+  [ -n "$upstreamPath" ] && [ -d "$upstreamPath" ] || return 1
+  [ "$(cd "$repositoryPath" && pwd -P)" != "$(cd "$upstreamPath" && pwd -P)" ] || return 1
+  git -C "$repositoryPath" fetch -q --no-recurse-submodules "$upstreamPath" '+refs/remotes/*:refs/gitto/upstream/*' 2>/dev/null
+}
+
+upstreamDefaultIn() {
+  repositoryPath="$1"
+  upstreamPath="$2"
+  defaultBranch=$(git -C "$upstreamPath" symbolic-ref --short -q refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)
+  upstreamRef="refs/gitto/upstream/$defaultBranch"
+  git -C "$repositoryPath" rev-parse -q --verify "$upstreamRef" >/dev/null && echo "$upstreamRef"
+}
+
+changesMissingFrom() {
+  repositoryPath="$1"
+  upstreamRef="$2"
+  candidates="$3"
+  [ -n "$candidates" ] || return 0
+  if [ -z "$upstreamRef" ]; then
+    printf '%s\n' "$candidates"
+    return 0
+  fi
+  if landedAsOneChange "$repositoryPath" "$upstreamRef"; then
+    return 0
+  fi
+  pending=$(git -C "$repositoryPath" cherry "$upstreamRef" HEAD 2>/dev/null | sed -n 's/^+ //p')
+  [ -n "$pending" ] || return 0
+  printf '%s\n' "$candidates" | grep -Fx -e "$pending" || true
+}
+
+landedAsOneChange() {
+  repositoryPath="$1"
+  upstreamRef="$2"
+  base=$(git -C "$repositoryPath" merge-base HEAD "$upstreamRef" 2>/dev/null) || return 1
+  git -C "$repositoryPath" diff --quiet "$base" HEAD && return 0
+  squashed=$(git -C "$repositoryPath" commit-tree "HEAD^{tree}" -p "$base" -m 'gitto: the whole branch as one change' 2>/dev/null) || return 1
+  git -C "$repositoryPath" cherry "$upstreamRef" "$squashed" 2>/dev/null | grep -q '^-'
 }
 
 diskKilobytesOf() {
@@ -635,14 +694,15 @@ allocatedKilobytesOf() {
 
 describeClone() {
   clonePath="$1"
-  measuring="$2"
+  canonicalPath="$2"
+  measuring="$3"
   diskKilobytes=$(diskKilobytesOf "$clonePath")
   [ -n "$diskKilobytes" ] && diskColumn=$(humanKilobytes "$diskKilobytes") || diskColumn="?"
   allocatedColumn=""
   [ "$measuring" = yes ] && allocatedColumn="  allocated=$(humanKilobytes "$(allocatedKilobytesOf "$clonePath")")"
   printf "%-24s %-22s dirty=%-5s unpushed=%-5s idle=%-6s new=%s%s\n" \
     "$(basename "$clonePath")" "$(branchOf "$clonePath")" \
-    "$(dirtyCountOf "$clonePath")" "$(unpushedCountOf "$clonePath")" \
+    "$(dirtyCountOf "$clonePath")" "$(unpushedCountOf "$clonePath" "$canonicalPath")" \
     "$(humanAge "$(idleSecondsOf "$clonePath")")" "$diskColumn" "$allocatedColumn"
 }
 
@@ -663,7 +723,7 @@ describeCloneAsJson() {
     "$(jsonString "$(shortNameOf "$clonePath" "$canonicalPath")")" \
     "$(jsonString "$(basename "$clonePath")")" "$(jsonString "$clonePath")" \
     "$(jsonString "$(branchOf "$clonePath")")" "$(dirtyCountOf "$clonePath")" \
-    "$(unpushedCountOf "$clonePath")" "$(idleSecondsOf "$clonePath")" \
+    "$(unpushedCountOf "$clonePath" "$canonicalPath")" "$(idleSecondsOf "$clonePath")" \
     "${diskKilobytes:-null}" "$allocatedField"
 }
 
@@ -672,7 +732,7 @@ listClones() {
   measuring=$(readFlag --measure "$@")
   if [ "$(readFlag --json "$@")" = no ]; then
     describeCanonical "$canonicalPath"
-    eachClone "$canonicalPath" | while read -r clonePath; do describeClone "$clonePath" "$measuring"; done
+    eachClone "$canonicalPath" | while read -r clonePath; do describeClone "$clonePath" "$canonicalPath" "$measuring"; done
     return 0
   fi
   printf '{\n  "canonical": {"name": "%s", "path": "%s", "branch": "%s", "behind": %s},\n  "clones": [\n' \
@@ -805,7 +865,7 @@ $(echo "$hostedElsewhere" | sed 's/^/        /')
   [ "$dirtyCount" -eq 0 ] || fail "$cloneName holds $dirtyCount uncommitted changes:
 $(statusEverywhere "$clonePath" | head -5 | sed 's/^/        /')
       commit them, or keep them with 'gitto remove $cloneName --archive'."
-  unpushedCount=$(unpushedCountOf "$clonePath")
+  unpushedCount=$(unpushedCountOf "$clonePath" "$canonicalPath")
   [ "$unpushedCount" -eq 0 ] || fail "$cloneName holds $unpushedCount commits no remote has, in it or in a submodule.
       push them, or keep them with 'gitto remove $cloneName --archive'."
 
@@ -842,8 +902,11 @@ diagnoseClone() {
 mergedIntoUpstream() {
   clonePath="$1"
   canonicalPath="$2"
-  mergeTarget=$(git -C "$canonicalPath" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)
-  git -C "$clonePath" merge-base --is-ancestor HEAD "$mergeTarget" 2>/dev/null
+  refreshUpstreamIn "$clonePath" "$canonicalPath" || return 1
+  upstreamRef=$(upstreamDefaultIn "$clonePath" "$canonicalPath")
+  [ -n "$upstreamRef" ] || return 1
+  candidates=$(git -C "$clonePath" rev-list HEAD --not "$upstreamRef" 2>/dev/null) || return 1
+  [ -z "$(changesMissingFrom "$clonePath" "$upstreamRef" "$candidates")" ]
 }
 
 pruneClones() {
@@ -860,7 +923,7 @@ pruneClones() {
     cloneName=$(shortNameOf "$clonePath" "$canonicalPath")
     idleSeconds=$(idleSecondsOf "$clonePath")
     holdsWork=no
-    if [ "$(dirtyCountOf "$clonePath")" -eq 0 ] && [ "$(unpushedCountOf "$clonePath")" -eq 0 ] \
+    if [ "$(dirtyCountOf "$clonePath")" -eq 0 ] && [ "$(unpushedCountOf "$clonePath" "$canonicalPath")" -eq 0 ] \
       && mergedIntoUpstream "$clonePath" "$canonicalPath"; then
       reason="merged, nothing to lose"
     elif [ -n "$staleDays" ] && [ "$idleSeconds" -ge $((${staleDays:-0} * 86400)) ]; then
