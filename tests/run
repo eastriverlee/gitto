@@ -362,7 +362,7 @@ reportsPlantedReferences() {
 everyManifestAgreesOnTheVersion() {
   repository=$(cd "$(dirname "$0")/.." && pwd)
   declared=$("$gitto" version | awk '{print $2}')
-  for manifest in plugins/gitto/plugin.json plugins/gitto/.claude-plugin/plugin.json; do
+  for manifest in plugins/gitto/plugin.json plugins/gitto/.claude-plugin/plugin.json .claude-plugin/marketplace.json; do
     stated=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$repository/$manifest" | head -1)
     if [ "$stated" = "$declared" ]; then
       report pass "$manifest agrees the version is $declared"
