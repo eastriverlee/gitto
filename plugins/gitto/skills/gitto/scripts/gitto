@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-gittoVersion=0.5.1
+gittoVersion=0.5.2
 
 updateInstalledScript() {
   runningScript=$0
@@ -982,10 +982,33 @@ printClonePath() {
 }
 
 statusEverywhere() {
-  repositoryPath="$1"
-  git -C "$repositoryPath" status --porcelain --ignore-submodules=dirty 2>/dev/null
-  git -C "$repositoryPath" submodule foreach --recursive --quiet \
-    'git status --porcelain --ignore-submodules=dirty | sed "s|^|$displaypath |"' 2>/dev/null || true
+  statusRoot="$1"
+  uncommittedIn "$statusRoot"
+  git -C "$statusRoot" submodule foreach --recursive --quiet 'echo "$displaypath"' 2>/dev/null \
+    | while IFS= read -r submodulePath; do
+        [ -n "$submodulePath" ] || continue
+        uncommittedIn "$statusRoot/$submodulePath" | sed "s|^|$submodulePath |"
+      done
+}
+
+uncommittedIn() {
+  examinedPath="$1"
+  git -C "$examinedPath" status --porcelain --ignore-submodules=dirty 2>/dev/null \
+    | while IFS= read -r statusLine; do
+        isCheckoutOffAPointerARemoteHolds "$examinedPath" "$statusLine" || printf '%s\n' "$statusLine"
+      done
+}
+
+isCheckoutOffAPointerARemoteHolds() {
+  case "$2" in
+    ' M '*) ;;
+    *) return 1 ;;
+  esac
+  driftedPath=${2#' M '}
+  recordedCommit=$(git -C "$1" ls-files --stage -- "$driftedPath" 2>/dev/null | awk '$1 == "160000" { print $2 }')
+  [ -n "$recordedCommit" ] || return 1
+  heldByNoRemote=$(git -C "$1/$driftedPath" rev-list -1 "$recordedCommit" --not --remotes 2>/dev/null) || return 1
+  [ -z "$heldByNoRemote" ]
 }
 
 recordSubmoduleHeads() {

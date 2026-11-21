@@ -409,6 +409,11 @@ gitto: auth-fix hosts the history of worktrees that live outside it:
       removing it would leave each of them without a repository.
 ```
 
+A submodule checked out on a commit other than the one its pointer records is
+not counted as uncommitted while a remote holds the recorded commit and nobody
+staged the move. Such a checkout holds no work: `git submodule update` run
+without `--recursive` leaves one behind in every nested submodule.
+
 Both counts read the submodules as well as the checkout. A commit made inside a
 submodule and pushed nowhere is invisible to `git status` at the top level once
 its pointer has been committed, and it is the copy no remote holds:

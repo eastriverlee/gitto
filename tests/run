@@ -635,6 +635,54 @@ refusesToLoseWorkInsideASubmodule() {
   expectPath 'so the clone is still there' "$canonical-lane/.gitto"
 }
 
+makeCanonicalWithATwoCommitSubmodule() {
+  root="$laboratory/$1"
+  mkdir -p "$root"
+  makeRepository "$root/dependency"
+  printf 'two\n' > "$root/dependency/file.txt"
+  git -C "$root/dependency" commit -qam second
+  makeRepository "$root/source"
+  git -C "$root/source" submodule add -q "$root/dependency" vendor/dependency
+  git -C "$root/source" commit -qm submodule
+  git clone -q --bare "$root/source" "$root/origin" 2>/dev/null
+  git clone -q "$root/origin" "$root/canonical" 2>/dev/null
+  git -C "$root/canonical" submodule update -q --init --recursive
+  echo "$root/canonical"
+}
+
+forgetsASubmoduleCheckedOutOffItsPointer() {
+  canonical=$(makeCanonicalWithATwoCommitSubmodule checkoutdrift)
+  runIn "$canonical" new lane >/dev/null 2>&1
+  git -C "$canonical-lane/vendor/dependency" checkout -q HEAD~1
+
+  expectMissing 'a submodule on another commit its remote has is not counted as work' \
+    "$(runIn "$canonical" list 2>&1 | grep lane)" 'dirty=1'
+  ( cd "$canonical" && "$gitto" remove lane >/dev/null 2>&1 ) || true
+  expectNoPath 'so the clone is removed' "$canonical-lane"
+
+  runIn "$canonical" new staged >/dev/null 2>&1
+  git -C "$canonical-staged/vendor/dependency" checkout -q HEAD~1
+  git -C "$canonical-staged" add vendor/dependency
+  refusal=$( ( cd "$canonical" && "$gitto" remove staged 2>&1 ) || true )
+  expectContains 'a pointer somebody staged is still work' "$refusal" 'uncommitted changes'
+  expectPath 'so that clone survives' "$canonical-staged/.gitto"
+}
+
+refusesToLoseTheCommitAPointerRecords() {
+  canonical=$(makeCanonicalWithATwoCommitSubmodule recordedonly)
+  runIn "$canonical" new lane >/dev/null 2>&1
+  printf 'work\n' > "$canonical-lane/vendor/dependency/file.txt"
+  git -C "$canonical-lane/vendor/dependency" commit -qam 'only this clone has it'
+  git -C "$canonical-lane" add vendor/dependency
+  git -C "$canonical-lane" commit -qm 'bump the pointer'
+  git -C "$canonical-lane" push -q origin lane
+  git -C "$canonical-lane/vendor/dependency" checkout -q HEAD~1
+
+  refusal=$( ( cd "$canonical" && "$gitto" remove lane 2>&1 ) || true )
+  expectContains 'a recorded commit no remote has stops the removal though the submodule left it' "$refusal" 'vendor/dependency'
+  expectPath 'so the clone is still there' "$canonical-lane/.gitto"
+}
+
 refusesToLoseWorkOnABranchWithNoUpstream() {
   canonical=$(makeCanonical noupstream)
   runIn "$canonical" new lane HEAD >/dev/null 2>&1
@@ -802,6 +850,8 @@ for testName in \
   refusesToOrphanWorktrees \
   refusesToLoseWork \
   refusesToLoseWorkInsideASubmodule \
+  forgetsASubmoduleCheckedOutOffItsPointer \
+  refusesToLoseTheCommitAPointerRecords \
   refusesToLoseWorkOnABranchWithNoUpstream \
   forgetsWorkThatLandedSquashed \
   forgetsWorkThatHistoryRewrote \
